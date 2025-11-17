@@ -8,7 +8,7 @@ FAKE_BOOKING_DB: Dict[str, Booking] = {}
 FAKE_TRANSACTION_DB: Dict[str, Transaction] = {}
 FAKE_TRIP_DB: Dict[str, Trip] = {}
 
-class BookingRepository:    
+class BookingStorage:    
     @staticmethod
     def save(booking: Booking) -> None:
         FAKE_BOOKING_DB[booking.booking_id] = booking
@@ -32,7 +32,7 @@ class BookingRepository:
             return True
         return False
 
-class TransactionRepository:    
+class TransactionStorage:    
     @staticmethod
     def save(transaction: Transaction) -> None:
         FAKE_TRANSACTION_DB[transaction.transaction_id] = transaction
@@ -59,7 +59,7 @@ class TransactionRepository:
             return True
         return False
 
-class TripRepository:    
+class TripStorage:    
     @staticmethod
     def save(trip: Trip) -> None:
         FAKE_TRIP_DB[trip.trip_id] = trip

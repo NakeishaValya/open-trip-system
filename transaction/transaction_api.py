@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from .aggregate_root import Transaction
 from .value_objects import PaymentMethod, PaymentType
-from repository import TransactionRepository
+from storage import TransactionStorage
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
 
@@ -39,7 +39,7 @@ def initiate_payment(request: InitiatePaymentRequest):
         # Initiate payment
         amount = Decimal(str(request.amount))
         transaction.initiate_payment(request.booking_id, amount, payment_method)
-        TransactionRepository.save(transaction)
+        TransactionStorage.save(transaction)
         
         return TransactionResponse(
             transaction_id=transaction.transaction_id,
@@ -54,7 +54,7 @@ def initiate_payment(request: InitiatePaymentRequest):
 
 @router.get("/{transaction_id}", response_model=TransactionResponse)
 def get_transaction(transaction_id: str):
-    transaction = TransactionRepository.find_by_id(transaction_id)
+    transaction = TransactionStorage.find_by_id(transaction_id)
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
     
@@ -69,7 +69,7 @@ def get_transaction(transaction_id: str):
 
 @router.get("/", response_model=List[TransactionResponse])
 def get_all_transactions():
-    transactions = TransactionRepository.get_all()
+    transactions = TransactionStorage.get_all()
     return [
         TransactionResponse(
             transaction_id=t.transaction_id,
@@ -84,39 +84,39 @@ def get_all_transactions():
 
 @router.post("/{transaction_id}/validate")
 def validate_payment(transaction_id: str):
-    transaction = TransactionRepository.find_by_id(transaction_id)
+    transaction = TransactionStorage.find_by_id(transaction_id)
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
     
     try:
         transaction.validate_payment(transaction_id)
-        TransactionRepository.save(transaction)
+        TransactionStorage.save(transaction)
         return {"message": "Payment validated successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/{transaction_id}/confirm")
 def confirm_payment(transaction_id: str):
-    transaction = TransactionRepository.find_by_id(transaction_id)
+    transaction = TransactionStorage.find_by_id(transaction_id)
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
     
     try:
         transaction.confirm_payment(transaction_id)
-        TransactionRepository.save(transaction)
+        TransactionStorage.save(transaction)
         return {"message": "Payment confirmed successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/{transaction_id}/refund")
 def refund_payment(transaction_id: str):
-    transaction = TransactionRepository.find_by_id(transaction_id)
+    transaction = TransactionStorage.find_by_id(transaction_id)
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
     
     try:
         transaction.mark_as_refunded()
-        TransactionRepository.save(transaction)
+        TransactionStorage.save(transaction)
         return {"message": "Transaction refunded successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

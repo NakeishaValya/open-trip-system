@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from .aggregate_root import Trip
 from .entities import Guide
-from repository import TripRepository
+from storage import TripStorage
 
 router = APIRouter(prefix="/trips", tags=["Trips"])
 
@@ -48,7 +48,7 @@ def create_trip(request: CreateTripRequest):
     
     try:
         trip = Trip(trip_id, request.trip_name, request.capacity)
-        TripRepository.save(trip)
+        TripStorage.save(trip)
         
         return TripResponse(
             trip_id=trip.trip_id,
@@ -61,7 +61,7 @@ def create_trip(request: CreateTripRequest):
 
 @router.get("/{trip_id}", response_model=TripResponse)
 def get_trip(trip_id: str):
-    trip = TripRepository.find_by_id(trip_id)
+    trip = TripStorage.find_by_id(trip_id)
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
     
@@ -93,7 +93,7 @@ def get_trip(trip_id: str):
 
 @router.get("/", response_model=List[TripResponse])
 def get_all_trips():
-    trips = TripRepository.get_all()
+    trips = TripStorage.get_all()
     return [
         TripResponse(
             trip_id=t.trip_id,
@@ -107,7 +107,7 @@ def get_all_trips():
 
 @router.post("/{trip_id}/schedule")
 def add_schedule(trip_id: str, request: AddScheduleRequest):
-    trip = TripRepository.find_by_id(trip_id)
+    trip = TripStorage.find_by_id(trip_id)
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
     
@@ -115,14 +115,14 @@ def add_schedule(trip_id: str, request: AddScheduleRequest):
         start = date.fromisoformat(request.start_date)
         end = date.fromisoformat(request.end_date)
         trip.add_schedule(start, end, request.location)
-        TripRepository.save(trip)
+        TripStorage.save(trip)
         return {"message": "Schedule added successfully"}
     except (ValueError, Exception) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/{trip_id}/guide")
 def assign_guide(trip_id: str, request: AssignGuideRequest):
-    trip = TripRepository.find_by_id(trip_id)
+    trip = TripStorage.find_by_id(trip_id)
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
     
@@ -130,33 +130,33 @@ def assign_guide(trip_id: str, request: AssignGuideRequest):
         guide_id = str(uuid4())
         guide = Guide(guide_id, request.guide_name, request.contact, request.language)
         trip.assign_guide(guide)
-        TripRepository.save(trip)
+        TripStorage.save(trip)
         return {"message": "Guide assigned successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.put("/{trip_id}/capacity")
 def update_capacity(trip_id: str, request: UpdateCapacityRequest):
-    trip = TripRepository.find_by_id(trip_id)
+    trip = TripStorage.find_by_id(trip_id)
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
     
     try:
         trip.update_capacity(request.new_capacity)
-        TripRepository.save(trip)
+        TripStorage.save(trip)
         return {"message": "Capacity updated successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.put("/{trip_id}/itinerary")
 def update_itinerary(trip_id: str, request: UpdateItineraryRequest):
-    trip = TripRepository.find_by_id(trip_id)
+    trip = TripStorage.find_by_id(trip_id)
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
     
     try:
         trip.update_itinerary(request.destinations, request.description)
-        TripRepository.save(trip)
+        TripStorage.save(trip)
         return {"message": "Itinerary updated successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

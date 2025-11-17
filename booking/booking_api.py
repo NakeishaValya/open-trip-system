@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from .aggregate_root import Booking
 from .entities import Participant
-from repository import BookingRepository
+from storage import BookingStorage
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
@@ -47,7 +47,7 @@ def create_booking(request: CreateBookingRequest):
     )
     
     booking = Booking.create_booking(booking_id, request.trip_id, participant)
-    BookingRepository.save(booking)
+    BookingStorage.save(booking)
     
     return BookingResponse(
         booking_id=booking.booking_id,
@@ -60,7 +60,7 @@ def create_booking(request: CreateBookingRequest):
 
 @router.get("/{booking_id}", response_model=BookingResponse)
 def get_booking(booking_id: str):
-    booking = BookingRepository.find_by_id(booking_id)
+    booking = BookingStorage.find_by_id(booking_id)
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     
@@ -75,7 +75,7 @@ def get_booking(booking_id: str):
 
 @router.get("/", response_model=List[BookingResponse])
 def get_all_bookings():
-    bookings = BookingRepository.get_all()
+    bookings = BookingStorage.get_all()
     return [
         BookingResponse(
             booking_id=b.booking_id,
@@ -90,39 +90,39 @@ def get_all_bookings():
 
 @router.post("/{booking_id}/confirm")
 def confirm_booking(booking_id: str):
-    booking = BookingRepository.find_by_id(booking_id)
+    booking = BookingStorage.find_by_id(booking_id)
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     
     try:
         booking.confirm_booking()
-        BookingRepository.save(booking)
+        BookingStorage.save(booking)
         return {"message": "Booking confirmed successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/{booking_id}/cancel")
 def cancel_booking(booking_id: str, request: CancelBookingRequest):
-    booking = BookingRepository.find_by_id(booking_id)
+    booking = BookingStorage.find_by_id(booking_id)
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     
     try:
         booking.cancel_booking(request.reason)
-        BookingRepository.save(booking)
+        BookingStorage.save(booking)
         return {"message": "Booking cancelled successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.post("/{booking_id}/refund")
-def request_refund(booking_id: str, request: RefundRequest):
-    booking = BookingRepository.find_by_id(booking_id)
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
+# @router.post("/{booking_id}/refund")
+# def request_refund(booking_id: str, request: RefundRequest):
+#     booking = BookingRepository.find_by_id(booking_id)
+#     if not booking:
+#         raise HTTPException(status_code=404, detail="Booking not found")
     
-    try:
-        booking.request_refund(request.reason)
-        BookingRepository.save(booking)
-        return {"message": "Refund requested successfully"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+#     try:
+#         booking.request_refund(request.reason)
+#         BookingRepository.save(booking)
+#         return {"message": "Refund requested successfully"}
+#     except ValueError as e:
+#         raise HTTPException(status_code=400, detail=str(e))
