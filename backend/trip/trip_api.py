@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from .aggregate_root import Trip
 from .entities import Guide
-from storage import TripStorage
+from backend.storage import TripStorage
 
 router = APIRouter(prefix="/trips", tags=["Trips"])
 
