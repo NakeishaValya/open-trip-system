@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from .aggregate_root import Transaction
 from .value_objects import PaymentMethod, PaymentType
-from backend.storage import TransactionStorage
+from storage import TransactionStorage
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
 
