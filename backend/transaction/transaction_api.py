@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from decimal import Decimal
@@ -7,6 +7,7 @@ from uuid import uuid4
 from .aggregate_root import Transaction
 from .value_objects import PaymentMethod, PaymentType
 from storage import TransactionStorage
+from auth import get_current_user
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
 
@@ -27,7 +28,7 @@ class TransactionResponse(BaseModel):
 
 # Endpoints
 @router.post("/", response_model=TransactionResponse)
-def initiate_payment(request: InitiatePaymentRequest):
+def initiate_payment(request: InitiatePaymentRequest, current_user: dict = Depends(get_current_user)):
     transaction_id = str(uuid4())
     transaction = Transaction(transaction_id)
     

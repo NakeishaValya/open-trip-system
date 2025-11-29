@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import date
@@ -7,6 +7,7 @@ from uuid import uuid4
 from .aggregate_root import Trip
 from .entities import Guide
 from storage import TripStorage
+from auth import get_current_user
 
 router = APIRouter(prefix="/trips", tags=["Trips"])
 
@@ -43,7 +44,7 @@ class UpdateCapacityRequest(BaseModel):
 
 # Endpoints
 @router.post("/", response_model=TripResponse)
-def create_trip(request: CreateTripRequest):
+def create_trip(request: CreateTripRequest, current_user: dict = Depends(get_current_user)):
     trip_id = str(uuid4())
     
     try:

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import uuid4
@@ -6,6 +6,7 @@ from uuid import uuid4
 from .aggregate_root import Booking
 from .entities import Participant
 from storage import BookingStorage
+from auth import get_current_user
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
@@ -35,7 +36,7 @@ class RefundRequest(BaseModel):
 
 # Endpoints
 @router.post("/", response_model=BookingResponse)
-def create_booking(request: CreateBookingRequest):
+def create_booking(request: CreateBookingRequest, current_user: dict = Depends(get_current_user)):
     booking_id = str(uuid4())
     participant_id = str(uuid4())
     

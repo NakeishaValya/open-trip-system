@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from auth import router as auth_router
 from booking.booking_api import router as booking_router
 from transaction.transaction_api import router as transaction_router
 from trip.trip_api import router as trip_router
@@ -21,6 +22,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth_router)
 app.include_router(booking_router)
 app.include_router(transaction_router)
 app.include_router(trip_router)
