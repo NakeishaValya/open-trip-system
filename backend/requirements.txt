@@ -1,7 +1,5 @@
 fastapi
 uvicorn
 python-jose[cryptography]
-passlib[bcrypt]
-bcrypt
+passlib[argon2]
 pydantic[email]
-python-multipart
