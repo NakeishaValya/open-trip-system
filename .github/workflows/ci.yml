@@ -30,7 +30,7 @@ jobs:
 
       - name: Run tests with pytest
         run: |
-          PYTHONPATH=. pytest --cov=backend backend/tests
+          PYTHONPATH=. pytest --cov=backend --cov-report=term-missing --cov-report=xml backend/tests
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
