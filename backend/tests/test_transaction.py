@@ -158,7 +158,7 @@ def test_validate_payment_error_branches():
     client.post(f"/transactions/{transaction.transaction_id}/validate")
     response = client.post(f"/transactions/{transaction.transaction_id}/validate")
     assert response.status_code == 400
-    response2 = client.post(f"/transactions/wrongid/validate")
+    response2 = client.post("/transactions/wrongid/validate")
     assert response2.status_code == 404
 
 def test_confirm_payment_error_branches():

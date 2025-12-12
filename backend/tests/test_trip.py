@@ -1,8 +1,13 @@
+
 from backend.trip.aggregate_root import Trip
 from backend.trip.entities import Guide
 from backend.trip.value_objects import Schedule, Itinerary
 from datetime import date
 import pytest
+from fastapi.testclient import TestClient
+from backend.main import app
+from backend.storage import TripStorage
+import backend.storage as storage_mod
 
 def test_trip_init_and_capacity():
     trip = Trip("t1", "Trip 1", 10)
@@ -90,11 +95,6 @@ def test_schedule_and_itinerary():
         Itinerary([], "Kosong")
 
 
-# --- API EDGE CASE TESTS ---
-from fastapi.testclient import TestClient
-from backend.main import app
-from backend.storage import TripStorage
-import backend.storage as storage_mod
 
 client = TestClient(app)
 
@@ -122,27 +122,62 @@ def test_get_trip_not_found():
 
 def test_add_schedule_errors():
     # Not found
-    response = client.post("/trips/doesnotexist/schedule", json={"start_date": "2025-12-01", "end_date": "2025-12-05", "location": "Bali"})
+    response = client.post(
+        "/trips/doesnotexist/schedule",
+        json={
+            "start_date": "2025-12-01",
+            "end_date": "2025-12-05",
+            "location": "Bali",
+        },
+    )
     assert response.status_code == 404
     # Invalid date
     from backend.trip.aggregate_root import Trip
     trip = Trip("t100", "Trip API", 10)
     TripStorage.save(trip)
-    response2 = client.post(f"/trips/{trip.trip_id}/schedule", json={"start_date": "invalid", "end_date": "2025-12-05", "location": "Bali"})
+    response2 = client.post(
+        f"/trips/{trip.trip_id}/schedule",
+        json={
+            "start_date": "invalid",
+            "end_date": "2025-12-05",
+            "location": "Bali",
+        },
+    )
     assert response2.status_code == 400
     # End date before start date
-    response3 = client.post(f"/trips/{trip.trip_id}/schedule", json={"start_date": "2025-12-10", "end_date": "2025-12-01", "location": "Bali"})
+    response3 = client.post(
+        f"/trips/{trip.trip_id}/schedule",
+        json={
+            "start_date": "2025-12-10",
+            "end_date": "2025-12-01",
+            "location": "Bali",
+        },
+    )
     assert response3.status_code == 400
 
 def test_assign_guide_errors():
     # Not found
-    response = client.post("/trips/doesnotexist/guide", json={"guide_name": "Guide X", "contact": "08123", "language": "EN"})
+    response = client.post(
+        "/trips/doesnotexist/guide",
+        json={
+            "guide_name": "Guide X",
+            "contact": "08123",
+            "language": "EN",
+        },
+    )
     assert response.status_code == 404
     # Empty guide name
     from backend.trip.aggregate_root import Trip
     trip = Trip("t101", "Trip API2", 10)
     TripStorage.save(trip)
-    response2 = client.post(f"/trips/{trip.trip_id}/guide", json={"guide_name": "", "contact": "08123", "language": "EN"})
+    response2 = client.post(
+        f"/trips/{trip.trip_id}/guide",
+        json={
+            "guide_name": "",
+            "contact": "08123",
+            "language": "EN",
+        },
+    )
     assert response2.status_code == 400
 
 def test_update_capacity_errors():
@@ -185,16 +220,37 @@ def test_assign_guide_contact_language_empty():
     trip = Trip("t201", "Trip API Guide", 10)
     TripStorage.save(trip)
     # Contact kosong
-    response = client.post(f"/trips/{trip.trip_id}/guide", json={"guide_name": "Guide X", "contact": "", "language": "EN"})
+    response = client.post(
+        f"/trips/{trip.trip_id}/guide",
+        json={
+            "guide_name": "Guide X",
+            "contact": "",
+            "language": "EN",
+        },
+    )
     # Tergantung validasi, bisa 200 atau 400
     assert response.status_code in (200, 400)
     # Language kosong
-    response2 = client.post(f"/trips/{trip.trip_id}/guide", json={"guide_name": "Guide X", "contact": "08123", "language": ""})
+    response2 = client.post(
+        f"/trips/{trip.trip_id}/guide",
+        json={
+            "guide_name": "Guide X",
+            "contact": "08123",
+            "language": "",
+        },
+    )
     assert response2.status_code in (200, 400)
 
 def test_add_schedule_location_whitespace():
     from backend.trip.aggregate_root import Trip
     trip = Trip("t202", "Trip API Loc", 10)
     TripStorage.save(trip)
-    response = client.post(f"/trips/{trip.trip_id}/schedule", json={"start_date": "2025-12-01", "end_date": "2025-12-05", "location": "   "})
+    response = client.post(
+        f"/trips/{trip.trip_id}/schedule",
+        json={
+            "start_date": "2025-12-01",
+            "end_date": "2025-12-05",
+            "location": "   ",
+        },
+    )
     assert response.status_code == 400

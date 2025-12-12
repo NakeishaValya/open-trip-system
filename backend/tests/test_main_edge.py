@@ -1,4 +1,4 @@
-from fastapi.testclient import TestClient
+
 from backend.main import app
 
 def test_docs_redirect():
@@ -15,9 +15,6 @@ def test_main_direct_run():
     importlib.import_module(name)
 
 def test_main_run_block(monkeypatch):
-    import importlib
-    import sys
-    import types
     # Patch uvicorn.run to avoid actually running the server
     import backend.main as main_mod
     called = {}

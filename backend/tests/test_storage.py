@@ -2,8 +2,6 @@ from backend.storage import BookingStorage, TransactionStorage, TripStorage
 from backend.booking.aggregate_root import Booking
 from backend.transaction.aggregate_root import Transaction
 from backend.trip.aggregate_root import Trip
-import pytest
-
 class DummyBooking(Booking):
     def __init__(self, booking_id="b1", trip_id="t1"):
         self.booking_id = booking_id

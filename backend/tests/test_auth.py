@@ -1,11 +1,11 @@
 
-
-import pytest
+ 
 from fastapi.testclient import TestClient
+import pytest
 from backend.main import app
 from backend.auth import (
     verify_password, get_password_hash, create_access_token, verify_token, UserStorage, User,
-    RegisterRequest, LoginRequest, TokenResponse, UserResponse, get_current_user
+    RegisterRequest
 )
 from datetime import timedelta
 from fastapi import HTTPException
