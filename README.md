@@ -1,16 +1,19 @@
 
 # Open Trip System
 
-![CI](https://github.com/NakeishaValya/open-trip-system/actions/workflows/ci.yml/badge.svg)
+<div align="center">
+	<img src="https://github.com/NakeishaValya/open-trip-system/actions/workflows/ci.yml/badge.svg" alt="CI" />
+	<a href="https://open-trip-system-production.up.railway.app">
+		<img src="https://railway.app/button.svg" alt="Deploy on Railway" />
+	</a>
+</div>
 
 Sistem manajemen open trip berbasis Domain-Driven Design (DDD) yang dibangun dengan FastAPI.
 
 ## Architecture Overview
 
-
-
-![Class Diagram](doc/classDiagram.png)
-![Activity Diagram](doc/activityDiagram.png)
+![Class Diagram](doc/classDiagram2.png)
+![Activity Diagram](doc/activityDiagram2.png)
 
 > **Catatan:** Activity diagram merupakan hasil pemetaan dari class diagram yang telah disesuaikan dengan endpoint dan alur kerja sistem. Activity diagram ini juga dibuat setelah penambahan fitur autentikasi (auth), karena auth bukan bagian dari aggregate yang tercantum pada class diagram.
 
@@ -144,14 +147,14 @@ Sistem ini telah dideploy di Railway dan dapat diakses melalui URL berikut:
 <details>
 <summary>Swagger UI (/docs)</summary>
 
-![Swagger UI Preview](doc/docs_preview.png)
+![Swagger UI Preview](doc/doc.png)
 
 </details>
 
 <details>
 <summary>ReDoc (/redoc)</summary>
 
-![ReDoc Preview](doc/redoc_preview.png)
+![ReDoc Preview](doc/redoc.png)
 
 </details>
 
