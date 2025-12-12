@@ -1,0 +1,4 @@
+[tool.ruff]
+line-length = 120
+select = ["E", "F"]  # Only error and fatal checks (E: pycodestyle errors, F: pyflakes)
+ignore = []
