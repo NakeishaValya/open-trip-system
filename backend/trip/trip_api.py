@@ -6,8 +6,8 @@ from uuid import uuid4
 
 from .aggregate_root import Trip
 from .entities import Guide
-from storage import TripStorage
-from auth import get_current_user
+from backend.storage import TripStorage
+from backend.auth import get_current_user
 
 router = APIRouter(prefix="/trips", tags=["Trips"])
 
@@ -112,6 +112,9 @@ def add_schedule(trip_id: str, request: AddScheduleRequest):
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
     
+    # Validasi location tidak boleh kosong/null
+    if not request.location or not request.location.strip():
+        raise HTTPException(status_code=400, detail="Location cannot be empty")
     try:
         start = date.fromisoformat(request.start_date)
         end = date.fromisoformat(request.end_date)
@@ -126,7 +129,11 @@ def assign_guide(trip_id: str, request: AssignGuideRequest):
     trip = TripStorage.find_by_id(trip_id)
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
-    
+
+    # Tambahan validasi: guide_name tidak boleh kosong
+    if not request.guide_name or not request.guide_name.strip():
+        raise HTTPException(status_code=400, detail="Guide name cannot be empty")
+
     try:
         guide_id = str(uuid4())
         guide = Guide(guide_id, request.guide_name, request.contact, request.language)

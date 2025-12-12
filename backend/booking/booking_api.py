@@ -5,8 +5,8 @@ from uuid import uuid4
 
 from .aggregate_root import Booking
 from .entities import Participant
-from storage import BookingStorage
-from auth import get_current_user
+from backend.storage import BookingStorage
+from backend.auth import get_current_user
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 

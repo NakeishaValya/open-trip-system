@@ -1,7 +1,7 @@
 from typing import Dict, Optional, List
-from booking.aggregate_root import Booking
-from transaction.aggregate_root import Transaction
-from trip.aggregate_root import Trip
+from backend.booking.aggregate_root import Booking
+from backend.transaction.aggregate_root import Transaction
+from backend.trip.aggregate_root import Trip
 
 # In-Memory Database
 FAKE_BOOKING_DB: Dict[str, Booking] = {}
