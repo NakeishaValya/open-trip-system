@@ -2,7 +2,6 @@
 # Open Trip System
 
 <div align="center">
-	<img src="https://github.com/NakeishaValya/open-trip-system/actions/workflows/ci.yml/badge.svg" alt="CI" />
 	<a href="https://open-trip-system-production.up.railway.app">
 		<img src="https://railway.app/button.svg" alt="Deploy on Railway" />
 	</a>
@@ -142,21 +141,8 @@ Sistem ini telah dideploy di Railway dan dapat diakses melalui URL berikut:
 	- [Swagger UI (docs)](https://open-trip-system-production.up.railway.app/docs)
 	- [ReDoc](https://open-trip-system-production.up.railway.app/redoc)
 
-### Preview
-
-<details>
-<summary>Swagger UI (/docs)</summary>
-
 ![Swagger UI Preview](doc/doc.png)
-
-</details>
-
-<details>
-<summary>ReDoc (/redoc)</summary>
-
 ![ReDoc Preview](doc/redoc.png)
-
-</details>
 
 ---
 
@@ -187,7 +173,15 @@ pip install fastapi uvicorn
 cd backend
 ```
 
+
 2. Run the application using Uvicorn
 ```bash
 uvicorn main:app --reload
+```
+
+### Running Tests & Coverage
+
+Untuk menjalankan seluruh unit test dan melihat coverage, gunakan perintah berikut dari root project:
+```bash
+pytest --cov=backend --cov-report=term-missing backend/tests
 ```
