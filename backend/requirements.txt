@@ -3,3 +3,6 @@ uvicorn
 python-jose[cryptography]
 passlib[argon2]
 pydantic[email]
+pytest
+pytest-cov
+httpx
