@@ -6,15 +6,15 @@ from backend.storage import BookingStorage
 from backend.booking.aggregate_root import Booking
 from backend.booking.entities import Participant
 from backend.booking.value_objects import BookingStatus, StatusCode
-
+from backend.storage import FAKE_BOOKING_DB
 
 client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def clear_storage():
-    BookingStorage.FAKE_BOOKING_DB.clear()
+    FAKE_BOOKING_DB.clear()
     yield
-    BookingStorage.FAKE_BOOKING_DB.clear()
+    FAKE_BOOKING_DB.clear()
 
 def make_participant():
     return Participant(participant_id="p1", name="Test", contact="08123", address="Jl. Test")
