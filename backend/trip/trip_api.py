@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import date
@@ -7,9 +7,40 @@ from uuid import uuid4
 from .aggregate_root import Trip
 from .entities import Guide
 from backend.storage import TripStorage
-from backend.auth import get_current_user
+from backend.auth import get_current_user, AuthenticatedUser
 
 router = APIRouter(prefix="/trips", tags=["Trips"])
+
+# ==========================================
+# HELPER FUNCTIONS
+# ==========================================
+
+def _get_trip(trip_id: str) -> Trip:
+    """
+    Mengambil trip berdasarkan ID
+    Jika tidak ditemukan, raise 404
+    """
+    trip = TripStorage.find_by_id(trip_id)
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trip dengan ID {trip_id} tidak ditemukan"
+        )
+    return trip
+
+def _ensure_ownership(trip: Trip, user: AuthenticatedUser):
+    """
+    Memastikan user yang request adalah pemilik/creator trip
+    Jika bukan, raise 403 Forbidden
+    """
+    if not hasattr(trip, 'user_id'):
+        # Jika trip belum punya user_id, skip check (backward compatibility)
+        return
+    if trip.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anda tidak memiliki izin untuk mengakses trip ini"
+        )
 
 # Request/Response Models
 class CreateTripRequest(BaseModel):
@@ -42,13 +73,22 @@ class UpdateItineraryRequest(BaseModel):
 class UpdateCapacityRequest(BaseModel):
     new_capacity: int
 
-# Endpoints
-@router.post("/", response_model=TripResponse)
-def create_trip(request: CreateTripRequest, current_user: dict = Depends(get_current_user)):
+# ==========================================
+# ENDPOINTS
+# ==========================================
+
+@router.post("/", status_code=status.HTTP_201_CREATED, response_model=TripResponse)
+def create_trip(
+    request: CreateTripRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Membuat trip baru (untuk planner/admin)"""
     trip_id = str(uuid4())
     
     try:
         trip = Trip(trip_id, request.trip_name, request.capacity)
+        # Simpan user_id untuk ownership tracking
+        trip.user_id = current_user.id
         TripStorage.save(trip)
         
         return TripResponse(
@@ -62,9 +102,8 @@ def create_trip(request: CreateTripRequest, current_user: dict = Depends(get_cur
 
 @router.get("/{trip_id}", response_model=TripResponse)
 def get_trip(trip_id: str):
-    trip = TripStorage.find_by_id(trip_id)
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
+    """Mengambil detail trip (public access)"""
+    trip = _get_trip(trip_id)
     
     schedules = [
         {
@@ -94,6 +133,7 @@ def get_trip(trip_id: str):
 
 @router.get("/", response_model=List[TripResponse])
 def get_all_trips():
+    """Mengambil daftar semua trip yang tersedia (public access)"""
     trips = TripStorage.get_all()
     return [
         TripResponse(
@@ -107,14 +147,21 @@ def get_all_trips():
     ]
 
 @router.post("/{trip_id}/schedule")
-def add_schedule(trip_id: str, request: AddScheduleRequest):
-    trip = TripStorage.find_by_id(trip_id)
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
+def add_schedule(
+    trip_id: str,
+    request: AddScheduleRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Menambahkan jadwal ke trip"""
+    trip = _get_trip(trip_id)
+    _ensure_ownership(trip, current_user)
     
     # Validasi location tidak boleh kosong/null
     if not request.location or not request.location.strip():
-        raise HTTPException(status_code=400, detail="Location cannot be empty")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Location cannot be empty"
+        )
     try:
         start = date.fromisoformat(request.start_date)
         end = date.fromisoformat(request.end_date)
@@ -125,14 +172,21 @@ def add_schedule(trip_id: str, request: AddScheduleRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/{trip_id}/guide")
-def assign_guide(trip_id: str, request: AssignGuideRequest):
-    trip = TripStorage.find_by_id(trip_id)
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
+def assign_guide(
+    trip_id: str,
+    request: AssignGuideRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Menugaskan guide ke trip"""
+    trip = _get_trip(trip_id)
+    _ensure_ownership(trip, current_user)
 
     # Tambahan validasi: guide_name tidak boleh kosong
     if not request.guide_name or not request.guide_name.strip():
-        raise HTTPException(status_code=400, detail="Guide name cannot be empty")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Guide name cannot be empty"
+        )
 
     try:
         guide_id = str(uuid4())
@@ -144,10 +198,14 @@ def assign_guide(trip_id: str, request: AssignGuideRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.put("/{trip_id}/capacity")
-def update_capacity(trip_id: str, request: UpdateCapacityRequest):
-    trip = TripStorage.find_by_id(trip_id)
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
+def update_capacity(
+    trip_id: str,
+    request: UpdateCapacityRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Memperbarui kapasitas trip"""
+    trip = _get_trip(trip_id)
+    _ensure_ownership(trip, current_user)
     
     try:
         trip.update_capacity(request.new_capacity)
@@ -157,10 +215,14 @@ def update_capacity(trip_id: str, request: UpdateCapacityRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.put("/{trip_id}/itinerary")
-def update_itinerary(trip_id: str, request: UpdateItineraryRequest):
-    trip = TripStorage.find_by_id(trip_id)
-    if not trip:
-        raise HTTPException(status_code=404, detail="Trip not found")
+def update_itinerary(
+    trip_id: str,
+    request: UpdateItineraryRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user)
+):
+    """Memperbarui itinerary trip"""
+    trip = _get_trip(trip_id)
+    _ensure_ownership(trip, current_user)
     
     try:
         trip.update_itinerary(request.destinations, request.description)
