@@ -22,10 +22,10 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(auth_router)
-app.include_router(booking_router)
-app.include_router(transaction_router)
-app.include_router(trip_router)
+# app.include_router(auth_router)
+app.include_router(booking_router, prefix='/api/opentrip')
+app.include_router(transaction_router, prefix='/api/opentrip')
+app.include_router(trip_router, prefix='/api/opentrip')
 
 @app.get("/")
 def root():
@@ -37,4 +37,4 @@ def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
