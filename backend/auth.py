@@ -1,20 +1,35 @@
-from datetime import datetime, timedelta
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, field_validator
 from uuid import uuid4
+from dotenv import load_dotenv
 
+# Load environment variables
+load_dotenv()
 
-SECRET_KEY = "your-secret-key-change-this-in-production"  # blm diganti
+# Konfigurasi JWT
+# Environment variable untuk production
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError(
+        "SECRET_KEY tidak ditemukan di environment variable"
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 security = HTTPBearer()
+
+class AuthenticatedUser(BaseModel):
+    id: str
+    email: Optional[str] = None
+    role: str
 
 class User(BaseModel):
     user_id: str
@@ -106,10 +121,36 @@ def verify_token(token: str) -> dict:
             detail="Invalid authentication credentials"
         )
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)) -> AuthenticatedUser:
+    """Fungsi untuk mengecek user saat ini berdasarkan token JWT (Stateless)"""
     token = credentials.credentials
-    payload = verify_token(token)
-    return payload
+    
+    # Exception untuk invalid credentials
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    try:
+        # Verify the signature directly (Stateless)
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        
+        # Extract user info from the token
+        user_id = payload.get("user_id")
+        
+        if user_id is None:
+            raise credentials_exception
+            
+        return AuthenticatedUser(
+            id=str(user_id),
+            email=payload.get("email"),
+            role=payload.get("role", "CUSTOMER")
+        )
+    
+    # Handle JWT errors
+    except JWTError:
+        raise credentials_exception
 
 # ============================================================================
 # REQUEST/RESPONSE
@@ -206,7 +247,12 @@ def login(request: LoginRequest):
     
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username, "user_id": user.user_id},
+        data={
+            "sub": user.username,
+            "user_id": user.user_id,
+            "email": user.email,
+            "role": "CUSTOMER"
+        },
         expires_delta=access_token_expires
     )
     
@@ -217,9 +263,8 @@ def login(request: LoginRequest):
     )
 
 @router.get("/me", response_model=UserResponse)
-def get_me(current_user: dict = Depends(get_current_user)):
-    username = current_user.get("sub")
-    user = UserStorage.get_by_username(username)
+def get_me(current_user: AuthenticatedUser = Depends(get_current_user)):
+    user = UserStorage.find_by_id(current_user.id)
     
     if not user:
         raise HTTPException(
