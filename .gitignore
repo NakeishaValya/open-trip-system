@@ -1,0 +1,18 @@
+# Python compiled files
+*.pyc
+*.pyo
+*$py.class
+__pycache__/
+
+# Virtual environment
+.venv/
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
