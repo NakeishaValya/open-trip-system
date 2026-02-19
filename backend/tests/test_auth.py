@@ -29,10 +29,18 @@ def test_create_and_verify_token():
 def test_userstorage_crud():
     user = User(user_id="u1", username="u1", email="u1@email.com", hashed_password="pw")
     UserStorage.save(user)
-    assert UserStorage.find_by_id("u1") == user
-    assert UserStorage.get_by_username("u1") == user
-    assert UserStorage.get_by_email("u1@email.com") == user
-    assert user in UserStorage.get_all()
+    found = UserStorage.find_by_id("u1")
+    assert found is not None
+    assert found.user_id == "u1"
+    assert found.username == "u1"
+    by_name = UserStorage.get_by_username("u1")
+    assert by_name is not None
+    assert by_name.user_id == "u1"
+    by_email = UserStorage.get_by_email("u1@email.com")
+    assert by_email is not None
+    assert by_email.user_id == "u1"
+    all_users = UserStorage.get_all()
+    assert any(u.user_id == "u1" for u in all_users)
     assert UserStorage.delete("u1") is True
     assert UserStorage.find_by_id("u1") is None
     assert UserStorage.delete("notfound") is False

@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from backend.main import app
 from backend.storage import TripStorage
-import backend.storage as storage_mod
+
 
 def test_trip_init_and_capacity():
     trip = Trip("t1", "Trip 1", 10)
@@ -98,11 +98,7 @@ def test_schedule_and_itinerary():
 
 client = TestClient(app)
 
-@pytest.fixture(autouse=True)
-def clear_trip_storage():
-    storage_mod.FAKE_TRIP_DB.clear()
-    yield
-    storage_mod.FAKE_TRIP_DB.clear()
+# DB cleanup is handled by conftest.py fixture
 
 def test_create_trip_invalid():
     token = "testtoken"

@@ -6,16 +6,9 @@ from backend.main import app
 from backend.storage import TransactionStorage
 from backend.transaction.aggregate_root import Transaction
 from backend.transaction.value_objects import PaymentStatus, PaymentStatusEnum, PaymentMethod, PaymentType
-import backend.storage as storage_mod
 from decimal import Decimal
 
 client = TestClient(app)
-
-@pytest.fixture(autouse=True)
-def clear_storage():
-    storage_mod.FAKE_TRANSACTION_DB.clear()
-    yield
-    storage_mod.FAKE_TRANSACTION_DB.clear()
 
 # --- UNIT TESTS ---
 def test_transaction_initiate_payment():
