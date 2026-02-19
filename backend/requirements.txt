@@ -7,3 +7,5 @@ pytest
 pytest-cov
 httpx
 dotenv
+sqlalchemy
+psycopg2-binary
