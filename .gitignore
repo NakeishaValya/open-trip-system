@@ -16,3 +16,12 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local SQLite DBs
+# - local database used during development
+# - test database created by pytest/conftest
+*.db
+test_open_trip.db
+local_open_trip.db
+local_travel.db
+
