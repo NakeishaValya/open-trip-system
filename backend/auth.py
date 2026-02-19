@@ -53,36 +53,125 @@ FAKE_USER_DB: Dict[str, User] = {}
 class UserStorage:
     @staticmethod
     def save(user: User) -> None:
-        FAKE_USER_DB[user.user_id] = user
-    
+        from backend.database import SessionLocal, UserModel
+        session = SessionLocal()
+        try:
+            existing = session.get(UserModel, user.user_id)
+            if existing:
+                existing.username = user.username
+                existing.email = user.email
+                existing.hashed_password = user.hashed_password
+                existing.full_name = user.full_name
+                existing.is_active = user.is_active
+            else:
+                session.add(UserModel(
+                    user_id=user.user_id,
+                    username=user.username,
+                    email=user.email,
+                    hashed_password=user.hashed_password,
+                    full_name=user.full_name,
+                    is_active=user.is_active,
+                ))
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     @staticmethod
     def find_by_id(user_id: str) -> Optional[User]:
-        return FAKE_USER_DB.get(user_id)
-    
+        from backend.database import SessionLocal, UserModel
+        session = SessionLocal()
+        try:
+            row = session.get(UserModel, user_id)
+            if row:
+                return User(
+                    user_id=row.user_id,
+                    username=row.username,
+                    email=row.email,
+                    hashed_password=row.hashed_password,
+                    full_name=row.full_name,
+                    is_active=row.is_active,
+                )
+            return None
+        finally:
+            session.close()
+
     @staticmethod
     def get_by_username(username: str) -> Optional[User]:
-        for user in FAKE_USER_DB.values():
-            if user.username == username:
-                return user
-        return None
-    
+        from backend.database import SessionLocal, UserModel
+        session = SessionLocal()
+        try:
+            row = session.query(UserModel).filter(UserModel.username == username).first()
+            if row:
+                return User(
+                    user_id=row.user_id,
+                    username=row.username,
+                    email=row.email,
+                    hashed_password=row.hashed_password,
+                    full_name=row.full_name,
+                    is_active=row.is_active,
+                )
+            return None
+        finally:
+            session.close()
+
     @staticmethod
     def get_by_email(email: str) -> Optional[User]:
-        for user in FAKE_USER_DB.values():
-            if user.email == email:
-                return user
-        return None
-    
+        from backend.database import SessionLocal, UserModel
+        session = SessionLocal()
+        try:
+            row = session.query(UserModel).filter(UserModel.email == email).first()
+            if row:
+                return User(
+                    user_id=row.user_id,
+                    username=row.username,
+                    email=row.email,
+                    hashed_password=row.hashed_password,
+                    full_name=row.full_name,
+                    is_active=row.is_active,
+                )
+            return None
+        finally:
+            session.close()
+
     @staticmethod
     def get_all() -> list[User]:
-        return list(FAKE_USER_DB.values())
-    
+        from backend.database import SessionLocal, UserModel
+        session = SessionLocal()
+        try:
+            rows = session.query(UserModel).all()
+            return [
+                User(
+                    user_id=r.user_id,
+                    username=r.username,
+                    email=r.email,
+                    hashed_password=r.hashed_password,
+                    full_name=r.full_name,
+                    is_active=r.is_active,
+                )
+                for r in rows
+            ]
+        finally:
+            session.close()
+
     @staticmethod
     def delete(user_id: str) -> bool:
-        if user_id in FAKE_USER_DB:
-            del FAKE_USER_DB[user_id]
-            return True
-        return False
+        from backend.database import SessionLocal, UserModel
+        session = SessionLocal()
+        try:
+            row = session.get(UserModel, user_id)
+            if row:
+                session.delete(row)
+                session.commit()
+                return True
+            return False
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
 # ============================================================================
 # APAPUN TENTANG JWT

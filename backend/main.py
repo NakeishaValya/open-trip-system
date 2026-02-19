@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -5,11 +7,22 @@ from backend.auth import router as auth_router
 from backend.booking.booking_api import router as booking_router
 from backend.transaction.transaction_api import router as transaction_router
 from backend.trip.trip_api import router as trip_router
+from backend.database import create_tables
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: create tables if they don't exist
+    create_tables()
+    yield
+    # Shutdown: nothing to clean up
+
 
 app = FastAPI(
     title="Open Trip System",
     description="DDD-based Open Trip Management System",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware
