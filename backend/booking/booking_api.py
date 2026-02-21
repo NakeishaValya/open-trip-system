@@ -1,12 +1,16 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Optional, List
+from datetime import date
 from uuid import uuid4
 
 from .aggregate_root import Booking
 from .entities import Participant
 from backend.storage import BookingStorage
-from backend.auth import get_current_user, AuthenticatedUser
+from backend.auth import get_current_user, get_current_user_flexible, AuthenticatedUser
+from backend.storage import TripStorage
+from .value_objects import BookingStatus, StatusCode
+from backend.trip.aggregate_root import Trip
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
@@ -41,68 +45,132 @@ def _ensure_ownership(booking: Booking, user: AuthenticatedUser):
             detail="Anda tidak memiliki izin untuk mengakses booking ini"
         )
 
+def _get_trip(trip_id: str) -> Trip:
+    """
+    Mengambil trip berdasarkan ID
+    Jika tidak ditemukan, raise 404
+    """
+    trip = TripStorage.find_by_id(trip_id)
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trip dengan ID {trip_id} tidak ditemukan"
+        )
+    return trip
+
 # Request/Response Models
 class ParticipantRequest(BaseModel):
     name: str
-    contact: str
-    address: str
+    phone_number: str
+    gender: Optional[str] = None
+    nationality: Optional[str] = None
+    date_of_birth: Optional[date] = None
+    pick_up_point: Optional[str] = None
+    notes: Optional[str] = None
 
 class CreateBookingRequest(BaseModel):
     trip_id: str
     participant: ParticipantRequest
 
+class PassengerResponse(BaseModel):
+    name: str
+    phone_number: str
+    gender: Optional[str] = None
+    nationality: Optional[str] = None
+    date_of_birth: Optional[date] = None
+    pick_up_point: Optional[str] = None
+    notes: Optional[str] = None
+
 class BookingResponse(BaseModel):
     booking_id: str
     trip_id: str
-    transaction_id: Optional[str]
-    participant_name: str
-    status_code: str
-    status_description: str
+    participant_id: str
+    status: str
+    message: Optional[str] = None
+    passenger: Optional[PassengerResponse] = None
 
 class CancelBookingRequest(BaseModel):
-    reason: str
+    booking_id: str
+    reason: Optional[str] = None
 
 class RefundRequest(BaseModel):
-    reason: str
+    booking_id: str
+    amount: Optional[float] = None
+    reason: Optional[str] = None
 
 # ==========================================
 # ENDPOINTS
 # ==========================================
-
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=BookingResponse)
 def create_booking(
     request: CreateBookingRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
-    """Membuat booking baru untuk trip"""
-    booking_id = str(uuid4())
-    participant_id = str(uuid4())
-    
-    participant = Participant(
-        participant_id=participant_id,
-        name=request.participant.name,
-        contact=request.participant.contact,
-        address=request.participant.address
-    )
-    
-    booking = Booking.create_booking(booking_id, request.trip_id, participant)
-    # Simpan user_id untuk ownership tracking
-    booking.user_id = current_user.id
-    BookingStorage.save(booking)
-    
-    return BookingResponse(
-        booking_id=booking.booking_id,
-        trip_id=booking.trip_id,
-        transaction_id=booking.transaction_id,
-        participant_name=booking.participant.name,
-        status_code=booking.status.status_code.value,
-        status_description=booking.status.description
-    )
+    """Create a booking for a trip using Pydantic request model."""
+    try:
+        payload = request
+        trip = _get_trip(payload.trip_id)
+
+        if not trip.is_available_for_booking():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Trip sudah penuh atau tidak tersedia untuk booking"
+            )
+
+        participant_data = payload.participant
+        participant_id = str(uuid4())
+        booking_id = str(uuid4())
+
+        # Map participant fields to domain Participant (contact/address)
+        contact = participant_data.phone_number or ''
+        address = participant_data.pick_up_point or ''
+        participant = Participant(participant_id, participant_data.name, contact, address)
+
+        # Create domain booking and persist
+        booking = Booking.create_booking(booking_id, payload.trip_id, participant)
+        # attach user id if available
+        if hasattr(current_user, 'id'):
+            booking.user_id = current_user.id
+        elif hasattr(current_user, 'user_id'):
+            booking.user_id = current_user.user_id
+
+        BookingStorage.save(booking)
+
+        # increment trip bookings and persist trip
+        try:
+            trip.increment_bookings()
+            TripStorage.save(trip)
+        except Exception:
+            # best effort: rollback booking if trip update fails
+            raise HTTPException(status_code=500, detail="Failed to update trip booking count")
+
+        passenger_resp = PassengerResponse(
+            name=participant.name,
+            phone_number=participant.contact,
+            gender=getattr(participant_data, 'gender', None),
+            nationality=getattr(participant_data, 'nationality', None),
+            date_of_birth=getattr(participant_data, 'date_of_birth', None),
+            pick_up_point=getattr(participant_data, 'pick_up_point', None),
+            notes=getattr(participant_data, 'notes', None),
+        )
+
+        return BookingResponse(
+            booking_id=booking.booking_id,
+            trip_id=booking.trip_id,
+            participant_id=participant.participant_id,
+            status=booking.status.status_code.value,
+            message="Booking created",
+            passenger=passenger_resp
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/{booking_id}", response_model=BookingResponse)
 def get_booking(
     booking_id: str,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Mengambil detail booking berdasarkan ID"""
     booking = _get_booking(booking_id)
@@ -111,15 +179,23 @@ def get_booking(
     return BookingResponse(
         booking_id=booking.booking_id,
         trip_id=booking.trip_id,
-        transaction_id=booking.transaction_id,
-        participant_name=booking.participant.name,
-        status_code=booking.status.status_code.value,
-        status_description=booking.status.description
+        participant_id=booking.participant.participant_id,
+        status=booking.status.status_code.value,
+        message=booking.status.description,
+        passenger=PassengerResponse(
+            name=booking.participant.name,
+            phone_number=booking.participant.phone_number,
+            gender=booking.participant.gender,
+            nationality=booking.participant.nationality,
+            date_of_birth=booking.participant.date_of_birth,
+            pick_up_point=booking.participant.pick_up_point,
+            notes=booking.participant.notes
+        )
     )
 
 @router.get("/", response_model=List[BookingResponse])
 def get_all_bookings(
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Mengambil daftar semua booking milik user"""
     # Filter hanya booking milik user yang login
@@ -128,14 +204,48 @@ def get_all_bookings(
         b for b in all_bookings 
         if not hasattr(b, 'user_id') or b.user_id == current_user.id
     ]
+    # Sync status based on trip schedule dates
+    for b in bookings:
+        try:
+            # Only consider confirmed bookings for status changes
+            if b.status.status_code == StatusCode.CONFIRMED:
+                trip = TripStorage.find_by_id(b.trip_id)
+                if trip:
+                    schedules = trip.get_schedules()
+                    if schedules:
+                        # determine earliest start and latest end
+                        starts = [s.start_date for s in schedules]
+                        ends = [s.end_date for s in schedules]
+                        earliest = min(starts)
+                        latest = max(ends)
+                        today = _date.today()
+                        # If trip already finished -> completed
+                        if latest < today:
+                            b.update_status(BookingStatus.completed())
+                            BookingStorage.save(b)
+                        # If trip hasn't started yet -> upcoming
+                        elif earliest >= today:
+                            b.update_status(BookingStatus.upcoming())
+                            BookingStorage.save(b)
+        except Exception:
+            # best-effort sync; do not fail the whole request
+            continue
     return [
         BookingResponse(
             booking_id=b.booking_id,
             trip_id=b.trip_id,
-            transaction_id=b.transaction_id,
-            participant_name=b.participant.name,
-            status_code=b.status.status_code.value,
-            status_description=b.status.description
+            participant_id=b.participant.participant_id,
+            status=b.status.status_code.value,
+            message=b.status.description,
+            passenger=PassengerResponse(
+                name=b.participant.name,
+                phone_number=b.participant.phone_number,
+                gender=b.participant.gender,
+                nationality=b.participant.nationality,
+                date_of_birth=b.participant.date_of_birth,
+                pick_up_point=b.participant.pick_up_point,
+                notes=b.participant.notes
+            )
         )
         for b in bookings
     ]
@@ -143,7 +253,7 @@ def get_all_bookings(
 @router.post("/{booking_id}/confirm")
 def confirm_booking(
     booking_id: str,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Konfirmasi booking"""
     booking = _get_booking(booking_id)
@@ -160,7 +270,7 @@ def confirm_booking(
 def cancel_booking(
     booking_id: str,
     request: CancelBookingRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Membatalkan booking"""
     booking = _get_booking(booking_id)

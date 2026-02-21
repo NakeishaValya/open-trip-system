@@ -7,7 +7,7 @@ from uuid import uuid4
 from .aggregate_root import Transaction
 from .value_objects import PaymentMethod, PaymentType
 from backend.storage import TransactionStorage
-from backend.auth import get_current_user, AuthenticatedUser
+from backend.auth import get_current_user, get_current_user_flexible, AuthenticatedUser
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
 
@@ -64,7 +64,7 @@ class TransactionResponse(BaseModel):
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=TransactionResponse)
 def initiate_payment(
     request: InitiatePaymentRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Memulai proses pembayaran untuk booking"""
     transaction_id = str(uuid4())
@@ -96,7 +96,7 @@ def initiate_payment(
 @router.get("/{transaction_id}", response_model=TransactionResponse)
 def get_transaction(
     transaction_id: str,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Mengambil detail transaction berdasarkan ID"""
     transaction = _get_transaction(transaction_id)
@@ -113,7 +113,7 @@ def get_transaction(
 
 @router.get("/", response_model=List[TransactionResponse])
 def get_all_transactions(
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Mengambil daftar semua transaction milik user"""
     # Filter hanya transaction milik user yang login
@@ -137,7 +137,7 @@ def get_all_transactions(
 @router.post("/{transaction_id}/validate")
 def validate_payment(
     transaction_id: str,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Validasi pembayaran"""
     transaction = _get_transaction(transaction_id)
@@ -153,7 +153,7 @@ def validate_payment(
 @router.post("/{transaction_id}/confirm")
 def confirm_payment(
     transaction_id: str,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Konfirmasi pembayaran"""
     transaction = _get_transaction(transaction_id)
@@ -169,7 +169,7 @@ def confirm_payment(
 @router.post("/{transaction_id}/refund")
 def refund_payment(
     transaction_id: str,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Proses refund pembayaran"""
     transaction = _get_transaction(transaction_id)

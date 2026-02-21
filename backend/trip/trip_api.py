@@ -3,11 +3,12 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import date
 from uuid import uuid4
+from decimal import Decimal
 
 from .aggregate_root import Trip
 from .entities import Guide
-from backend.storage import TripStorage
-from backend.auth import get_current_user, AuthenticatedUser
+from backend.storage import TripStorage, BookingStorage
+from backend.auth import get_current_user, get_current_user_flexible, AuthenticatedUser
 
 router = APIRouter(prefix="/trips", tags=["Trips"])
 
@@ -73,6 +74,16 @@ class UpdateItineraryRequest(BaseModel):
 class UpdateCapacityRequest(BaseModel):
     new_capacity: int
 
+class LatestTripResponse(BaseModel):
+    """Response model for latest trip query"""
+    trip_id: int
+    trip_name: str
+    departure_date: str
+    price: float
+    location: str
+    status: str
+    destination_type: Optional[str] = ''
+
 # ==========================================
 # ENDPOINTS
 # ==========================================
@@ -80,7 +91,7 @@ class UpdateCapacityRequest(BaseModel):
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=TripResponse)
 def create_trip(
     request: CreateTripRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Membuat trip baru (untuk planner/admin)"""
     trip_id = str(uuid4())
@@ -99,6 +110,80 @@ def create_trip(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/latest", response_model=LatestTripResponse)
+def get_latest_trip(email: Optional[str] = None):
+    """
+    Get the latest trip for a user by email (public endpoint for Customer role).
+    Note: Since open-trip-system doesn't have a users table, we query all bookings
+    and return the latest trip. In production, filter by user_id from Django service.
+    """
+    from backend.database import SessionLocal, TripModel, BookingModel
+    
+    session = SessionLocal()
+    try:
+        # Debug: Check if we have any data at all
+        all_trips = session.query(TripModel).all()
+        all_bookings = session.query(BookingModel).all()
+        
+        print(f"[DEBUG] Total trips in DB: {len(all_trips)}")
+        print(f"[DEBUG] Total bookings in DB: {len(all_bookings)}")
+        
+        if not all_bookings:
+            # No bookings, just return the latest trip if any
+            if not all_trips:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No trips found in database"
+                )
+            
+            # Get trips with departure dates
+            trips_with_dates = session.query(TripModel).filter(
+                TripModel.departure_date != None
+            ).order_by(TripModel.departure_date.desc()).all()
+            
+            if not trips_with_dates:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No trips with valid departure dates found"
+                )
+            
+            latest_trip = trips_with_dates[0]
+        else:
+            # Get all unique trip_ids from bookings
+            trip_ids = list(set([b.trip_id for b in all_bookings]))
+            print(f"[DEBUG] Trip IDs from bookings: {trip_ids}")
+            
+            # Query trips with departure dates
+            trips_with_dates = session.query(TripModel).filter(
+                TripModel.trip_id.in_(trip_ids),
+                TripModel.departure_date != None
+            ).order_by(TripModel.departure_date.desc()).all()
+            
+            if not trips_with_dates:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No trips with valid departure dates found"
+                )
+            
+            latest_trip = trips_with_dates[0]
+        
+        print(f"[DEBUG] Returning trip: {latest_trip.trip_id} - {latest_trip.trip_name}")
+        
+        # Get location from schedules (concatenated)
+        location = latest_trip.location or ""
+        
+        return LatestTripResponse(
+            trip_id=latest_trip.trip_id,
+            trip_name=latest_trip.trip_name,
+            departure_date=str(latest_trip.departure_date) if latest_trip.departure_date else "",
+            price=float(latest_trip.price) if latest_trip.price else 0.0,
+            location=location,
+            status=latest_trip.status or "Upcoming",
+            destination_type=getattr(latest_trip, 'destination_type', '') or ''
+        )
+    finally:
+        session.close()
 
 @router.get("/{trip_id}", response_model=TripResponse)
 def get_trip(trip_id: str):
@@ -150,7 +235,7 @@ def get_all_trips():
 def add_schedule(
     trip_id: str,
     request: AddScheduleRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Menambahkan jadwal ke trip"""
     trip = _get_trip(trip_id)
@@ -175,7 +260,7 @@ def add_schedule(
 def assign_guide(
     trip_id: str,
     request: AssignGuideRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Menugaskan guide ke trip"""
     trip = _get_trip(trip_id)
@@ -201,7 +286,7 @@ def assign_guide(
 def update_capacity(
     trip_id: str,
     request: UpdateCapacityRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Memperbarui kapasitas trip"""
     trip = _get_trip(trip_id)
@@ -218,7 +303,7 @@ def update_capacity(
 def update_itinerary(
     trip_id: str,
     request: UpdateItineraryRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user)
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible)
 ):
     """Memperbarui itinerary trip"""
     trip = _get_trip(trip_id)
