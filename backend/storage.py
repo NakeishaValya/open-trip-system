@@ -1,5 +1,6 @@
 ﻿from typing import Optional, List
 from decimal import Decimal
+from datetime import date
 
 import backend.database as _db
 from backend.database import (
@@ -15,6 +16,7 @@ from backend.transaction.value_objects import PaymentStatus, PaymentStatusEnum, 
 from backend.trip.aggregate_root import Trip
 from backend.trip.entities import Guide
 from backend.trip.value_objects import Schedule, Itinerary
+from sqlalchemy.orm import Session
 
 
 # ============================================================================
@@ -25,8 +27,12 @@ def _participant_to_domain(row: ParticipantModel) -> Participant:
     return Participant(
         participant_id=row.participant_id,
         name=row.name,
-        contact=row.contact,
-        address=row.address,
+        contact=row.phone_number,  # Map phone_number to contact
+        address=row.pick_up_point or '',  # Map pick_up_point to address
+        gender=row.gender,
+        nationality=row.nationality,
+        date_of_birth=row.date_of_birth,
+        notes=row.notes,
     )
 
 
@@ -34,7 +40,7 @@ def _booking_to_domain(row: BookingModel) -> Booking:
     participant = _participant_to_domain(row.participant)
     booking = Booking.__new__(Booking)
     booking.booking_id = row.booking_id
-    booking.trip_id = row.trip_id
+    booking.trip_id = str(row.trip_id)  # Convert integer to string for consistency
     booking.participant = participant
     booking.status = BookingStatus(StatusCode(row.status_code), row.status_description)
     booking.transaction_id = row.transaction_id
@@ -64,7 +70,7 @@ def _transaction_to_domain(row: TransactionModel) -> Transaction:
 
 def _trip_to_domain(row: TripModel) -> Trip:
     trip = Trip.__new__(Trip)
-    trip.trip_id = row.trip_id
+    trip.trip_id = str(row.trip_id)  # Convert integer to string for domain model
     trip.trip_name = row.trip_name
     trip.capacity = row.capacity
     trip._current_bookings = row.current_bookings or 0
@@ -78,9 +84,9 @@ def _trip_to_domain(row: TripModel) -> Trip:
     if row.guide:
         g = row.guide
         guide = Guide(g.guide_id, g.name, g.contact, g.language)
-        guide.assign_to_trip(trip.trip_id)
+        guide.assign_to_trip(str(trip.trip_id))  # Convert to string
         for sched in trip._schedules:
-            guide.set_trip_schedule(trip.trip_id, sched.start_date, sched.end_date)
+            guide.set_trip_schedule(str(trip.trip_id), sched.start_date, sched.end_date)  # Convert to string
         trip._guide = guide
     else:
         trip._guide = None
@@ -170,6 +176,16 @@ class BookingStorage:
         session = _db.SessionLocal()
         try:
             rows = session.query(BookingModel).all()
+            return [_booking_to_domain(r) for r in rows]
+        finally:
+            session.close()
+
+    @staticmethod
+    def find_by_user_id(user_id: str) -> List[Booking]:
+        """Find all bookings for a specific user"""
+        session = _db.SessionLocal()
+        try:
+            rows = session.query(BookingModel).filter(BookingModel.user_id == user_id).all()
             return [_booking_to_domain(r) for r in rows]
         finally:
             session.close()
@@ -365,7 +381,12 @@ class TripStorage:
     def find_by_id(trip_id: str) -> Optional[Trip]:
         session = _db.SessionLocal()
         try:
-            row = session.get(TripModel, trip_id)
+            # Convert string trip_id to integer for database query
+            try:
+                trip_id_int = int(trip_id)
+            except (ValueError, TypeError):
+                return None
+            row = session.get(TripModel, trip_id_int)
             return _trip_to_domain(row) if row else None
         finally:
             session.close()
@@ -405,3 +426,41 @@ class TripStorage:
             raise
         finally:
             session.close()
+
+
+# ============================================================================
+# PARTICIPANT STORAGE
+# ============================================================================
+
+class ParticipantStorage:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def save(
+        self, 
+        participant_id: str, 
+        name: str, 
+        phone_number: str,
+        gender: Optional[str] = None,
+        nationality: Optional[str] = None,
+        date_of_birth: Optional[date] = None,
+        pick_up_point: Optional[str] = None,
+        notes: Optional[str] = None
+    ):
+        participant = ParticipantModel(
+            participant_id=participant_id,
+            name=name,
+            phone_number=phone_number,
+            gender=gender,
+            nationality=nationality,
+            date_of_birth=date_of_birth,
+            pick_up_point=pick_up_point,
+            notes=notes
+        )
+        self.session.add(participant)
+        self.session.commit()
+
+    def find_by_id(self, participant_id: str) -> Optional[ParticipantModel]:
+        return self.session.query(ParticipantModel).filter(
+            ParticipantModel.participant_id == participant_id
+        ).first()

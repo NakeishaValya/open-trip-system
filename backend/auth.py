@@ -3,11 +3,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import APIRouter, Depends, HTTPException, status, Security
+from fastapi import APIRouter, Depends, HTTPException, status, Security, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, field_validator
 from uuid import uuid4
 from dotenv import load_dotenv
+from typing import Optional as TypingOptional
 
 # Load environment variables
 load_dotenv()
@@ -51,127 +52,40 @@ class User(BaseModel):
 FAKE_USER_DB: Dict[str, User] = {}
 
 class UserStorage:
+    """In-memory user storage to avoid creating a local users table.
+    
+    Authentication is delegated to the central Django service. This storage
+    is used only for local testing and development flows.
+    """
     @staticmethod
     def save(user: User) -> None:
-        from backend.database import SessionLocal, UserModel
-        session = SessionLocal()
-        try:
-            existing = session.get(UserModel, user.user_id)
-            if existing:
-                existing.username = user.username
-                existing.email = user.email
-                existing.hashed_password = user.hashed_password
-                existing.full_name = user.full_name
-                existing.is_active = user.is_active
-            else:
-                session.add(UserModel(
-                    user_id=user.user_id,
-                    username=user.username,
-                    email=user.email,
-                    hashed_password=user.hashed_password,
-                    full_name=user.full_name,
-                    is_active=user.is_active,
-                ))
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
+        FAKE_USER_DB[user.user_id] = user
 
     @staticmethod
     def find_by_id(user_id: str) -> Optional[User]:
-        from backend.database import SessionLocal, UserModel
-        session = SessionLocal()
-        try:
-            row = session.get(UserModel, user_id)
-            if row:
-                return User(
-                    user_id=row.user_id,
-                    username=row.username,
-                    email=row.email,
-                    hashed_password=row.hashed_password,
-                    full_name=row.full_name,
-                    is_active=row.is_active,
-                )
-            return None
-        finally:
-            session.close()
+        return FAKE_USER_DB.get(user_id)
 
     @staticmethod
     def get_by_username(username: str) -> Optional[User]:
-        from backend.database import SessionLocal, UserModel
-        session = SessionLocal()
-        try:
-            row = session.query(UserModel).filter(UserModel.username == username).first()
-            if row:
-                return User(
-                    user_id=row.user_id,
-                    username=row.username,
-                    email=row.email,
-                    hashed_password=row.hashed_password,
-                    full_name=row.full_name,
-                    is_active=row.is_active,
-                )
-            return None
-        finally:
-            session.close()
+        for u in FAKE_USER_DB.values():
+            if u.username == username:
+                return u
+        return None
 
     @staticmethod
     def get_by_email(email: str) -> Optional[User]:
-        from backend.database import SessionLocal, UserModel
-        session = SessionLocal()
-        try:
-            row = session.query(UserModel).filter(UserModel.email == email).first()
-            if row:
-                return User(
-                    user_id=row.user_id,
-                    username=row.username,
-                    email=row.email,
-                    hashed_password=row.hashed_password,
-                    full_name=row.full_name,
-                    is_active=row.is_active,
-                )
-            return None
-        finally:
-            session.close()
+        for u in FAKE_USER_DB.values():
+            if u.email == email:
+                return u
+        return None
 
     @staticmethod
     def get_all() -> list[User]:
-        from backend.database import SessionLocal, UserModel
-        session = SessionLocal()
-        try:
-            rows = session.query(UserModel).all()
-            return [
-                User(
-                    user_id=r.user_id,
-                    username=r.username,
-                    email=r.email,
-                    hashed_password=r.hashed_password,
-                    full_name=r.full_name,
-                    is_active=r.is_active,
-                )
-                for r in rows
-            ]
-        finally:
-            session.close()
+        return list(FAKE_USER_DB.values())
 
     @staticmethod
     def delete(user_id: str) -> bool:
-        from backend.database import SessionLocal, UserModel
-        session = SessionLocal()
-        try:
-            row = session.get(UserModel, user_id)
-            if row:
-                session.delete(row)
-                session.commit()
-                return True
-            return False
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
+        return FAKE_USER_DB.pop(user_id, None) is not None
 
 # ============================================================================
 # APAPUN TENTANG JWT
@@ -240,6 +154,65 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
     # Handle JWT errors
     except JWTError:
         raise credentials_exception
+
+def get_current_user_flexible(
+    request: Request,
+    x_user_id: TypingOptional[str] = Header(None),
+    x_user_role: TypingOptional[str] = Header(None),
+) -> AuthenticatedUser:
+    """
+    Flexible authentication that accepts either:
+    1. JWT Bearer token (for direct API access)
+    2. X-User-ID and X-User-Role headers (for trusted gateway requests)
+    
+    This allows the microservice to work both standalone and behind a gateway.
+    """
+    # Check if we have gateway headers (trusted internal communication)
+    if x_user_id and x_user_role:
+        # Validate that headers are present and non-empty
+        if x_user_id.strip() and x_user_role.strip():
+            return AuthenticatedUser(
+                id=x_user_id,
+                email=None,  # Gateway may not provide email
+                role=x_user_role
+            )
+    
+    # Fall back to JWT token authentication
+    auth_header = request.headers.get("authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:]  # Remove "Bearer " prefix
+        
+        credentials_exception = HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
+        try:
+            # Verify the signature directly
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            
+            # Extract user info from the token
+            user_id = payload.get("user_id")
+            
+            if user_id is None:
+                raise credentials_exception
+                
+            return AuthenticatedUser(
+                id=str(user_id),
+                email=payload.get("email"),
+                role=payload.get("role", "CUSTOMER")
+            )
+        
+        except JWTError:
+            raise credentials_exception
+    
+    # No valid authentication method provided
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 # ============================================================================
 # REQUEST/RESPONSE
