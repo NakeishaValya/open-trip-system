@@ -1,11 +1,29 @@
-from typing import List
+from typing import List, Optional
+from datetime import date
 
 class Participant:
-    def __init__(self, participant_id: str, name: str, contact: str, address: str):
+    def __init__(
+        self, 
+        participant_id: str, 
+        name: str, 
+        contact: str, 
+        address: str,
+        gender: Optional[str] = None,
+        nationality: Optional[str] = None,
+        date_of_birth: Optional[date] = None,
+        notes: Optional[str] = None
+    ):
         self.participant_id = participant_id
         self.name = name
-        self.contact = contact
-        self.address = address
+        self.contact = contact  # Maps to phone_number in DB
+        self.address = address  # Maps to pick_up_point in DB
+        self.gender = gender
+        self.nationality = nationality
+        self.date_of_birth = date_of_birth
+        self.notes = notes
+        # Additional properties for domain logic
+        self.phone_number = contact  # Alias for easier access
+        self.pick_up_point = address  # Alias for easier access
         self._active_bookings: List[str] = []
         self._completed_trips: List[str] = []
     

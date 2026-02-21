@@ -6,7 +6,7 @@ so that tests run fast and without external dependencies.
 import os, pytest
 
 # ── Force SQLite BEFORE any backend module is imported ────────────────────
-os.environ["DATABASE_URL"] = "sqlite:///./test_open_trip.db"
+os.environ["DATABASE_URL"] = "sqlite:///./local_open_trip.db"
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -15,7 +15,7 @@ import backend.database as _db
 
 # Build a test engine (SQLite, file-based so it's shared across sessions)
 _test_engine = create_engine(
-    "sqlite:///./test_open_trip.db",
+    "sqlite:///./local_open_trip.db",
     echo=False,
     connect_args={"check_same_thread": False},
 )

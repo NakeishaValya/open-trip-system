@@ -5,6 +5,7 @@ class StatusCode(Enum):
     PENDING = "PENDING"
     CONFIRMED = "CONFIRMED"
     CANCELLED = "CANCELLED"
+    UPCOMING = "UPCOMING"
     COMPLETED = "COMPLETED"
     REFUND_REQUESTED = "REFUND_REQUESTED"
 
@@ -20,6 +21,10 @@ class BookingStatus:
     @staticmethod
     def confirmed():
         return BookingStatus(StatusCode.CONFIRMED, "Booking is confirmed")
+
+    @staticmethod
+    def upcoming():
+        return BookingStatus(StatusCode.UPCOMING, "Booking is upcoming")
     
     @staticmethod
     def cancelled(reason: str = ""):
