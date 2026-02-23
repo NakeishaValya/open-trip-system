@@ -250,6 +250,60 @@ def get_all_bookings(
         for b in bookings
     ]
 
+
+@router.get("/by_trip/{trip_id}")
+def get_bookings_by_trip(trip_id: str):
+    """Return bookings for a given trip_id (no ownership check).
+
+    This endpoint is intended for internal UI needs where we want to
+    display booking/participant data for a trip without requiring the
+    request to originate from the booking owner.
+    """
+    try:
+        import sys
+        print(f"[DEBUG] get_bookings_by_trip called with trip_id={trip_id}", file=sys.stderr, flush=True)
+        
+        all_bookings = BookingStorage.get_all()
+        print(f"[DEBUG] Found {len(all_bookings)} total bookings", file=sys.stderr, flush=True)
+        
+        matched = [b for b in all_bookings if getattr(b, 'trip_id', None) == trip_id]
+        print(f"[DEBUG] Found {len(matched)} matching bookings", file=sys.stderr, flush=True)
+
+        results = []
+        for b in matched:
+            try:
+                print(f"[DEBUG] Processing booking {b.booking_id}", file=sys.stderr, flush=True)
+                result = {
+                    "booking_id": b.booking_id,
+                    "trip_id": b.trip_id,
+                    "participant_id": b.participant.participant_id,
+                    "status": b.status.status_code.value,
+                    "message": b.status.description,
+                    "passenger": {
+                        "name": b.participant.name,
+                        "phone_number": b.participant.phone_number,
+                        "gender": b.participant.gender,
+                        "nationality": b.participant.nationality,
+                        "date_of_birth": str(b.participant.date_of_birth) if b.participant.date_of_birth else None,
+                        "pick_up_point": b.participant.pick_up_point,
+                        "notes": b.participant.notes
+                    }
+                }
+                results.append(result)
+            except Exception as e:
+                print(f"[ERROR] Failed to serialize booking {b.booking_id}: {e}", file=sys.stderr, flush=True)
+                import traceback
+                traceback.print_exc()
+                raise
+
+        print(f"[DEBUG] Returning {len(results)} results", file=sys.stderr, flush=True)
+        return results
+    except Exception as e:
+        print(f"[ERROR] get_bookings_by_trip failed: {e}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 @router.post("/{booking_id}/confirm")
 def confirm_booking(
     booking_id: str,

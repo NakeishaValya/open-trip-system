@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.auth import router as auth_router
 from backend.booking.booking_api import router as booking_router
 from backend.transaction.transaction_api import router as transaction_router
-from backend.trip.trip_api import router as trip_router
 from backend.database import create_tables
 
 
@@ -20,7 +19,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Open Trip System",
-    description="DDD-based Open Trip Management System",
+    description="DDD-based Open Trip Booking & Transaction Management System",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -38,7 +37,8 @@ app.add_middleware(
 # app.include_router(auth_router)
 app.include_router(booking_router, prefix='/api/opentrip')
 app.include_router(transaction_router, prefix='/api/opentrip')
-app.include_router(trip_router, prefix='/api/opentrip')
+# NOTE: trip_router removed - Trip APIs now available in Travel Planner service
+# app.include_router(trip_router, prefix='/api/opentrip')
 
 @app.get("/")
 def root():
@@ -50,4 +50,4 @@ def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8002)

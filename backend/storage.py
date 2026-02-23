@@ -1,4 +1,4 @@
-﻿from typing import Optional, List
+from typing import Optional, List
 from decimal import Decimal
 from datetime import date
 
@@ -6,29 +6,33 @@ import backend.database as _db
 from backend.database import (
     BookingModel, ParticipantModel,
     TransactionModel,
-    TripModel, ScheduleModel, GuideModel, ItineraryModel,
+    # NOTE: Trip-related models (TripModel, ScheduleModel, GuideModel, ItineraryModel)
+    # have been MOVED to Travel Planner microservice
 )
 from backend.booking.aggregate_root import Booking
 from backend.booking.entities import Participant
 from backend.booking.value_objects import BookingStatus, StatusCode
 from backend.transaction.aggregate_root import Transaction
 from backend.transaction.value_objects import PaymentStatus, PaymentStatusEnum, PaymentMethod, PaymentType
-from backend.trip.aggregate_root import Trip
-from backend.trip.entities import Guide
-from backend.trip.value_objects import Schedule, Itinerary
+# NOTE: Trip-related domain models moved to Travel Planner
+# from backend.trip.aggregate_root import Trip
+# from backend.trip.entities import Guide
+# from backend.trip.value_objects import Schedule, Itinerary
 from sqlalchemy.orm import Session
 
 
 # ============================================================================
-# MAPPERS  â€“  ORM â†” Domain
+# MAPPERS  — ORM ↔ Domain
 # ============================================================================
 
 def _participant_to_domain(row: ParticipantModel) -> Participant:
+    # Combine first_name and last_name from DB to name in domain
+    full_name = f"{row.first_name} {row.last_name}".strip()
     return Participant(
-        participant_id=row.participant_id,
-        name=row.name,
+        participant_id=str(row.participant_id),  # Convert UUID to string
+        name=full_name,
         contact=row.phone_number,  # Map phone_number to contact
-        address=row.pick_up_point or '',  # Map pick_up_point to address
+        address='',  # pick_up_point removed from new schema
         gender=row.gender,
         nationality=row.nationality,
         date_of_birth=row.date_of_birth,
@@ -39,11 +43,12 @@ def _participant_to_domain(row: ParticipantModel) -> Participant:
 def _booking_to_domain(row: BookingModel) -> Booking:
     participant = _participant_to_domain(row.participant)
     booking = Booking.__new__(Booking)
-    booking.booking_id = row.booking_id
-    booking.trip_id = str(row.trip_id)  # Convert integer to string for consistency
+    booking.booking_id = str(row.booking_id)  # Convert UUID to string
+    booking.trip_id = str(row.id_rencana)  # Map id_rencana to trip_id
     booking.participant = participant
-    booking.status = BookingStatus(StatusCode(row.status_code), row.status_description)
-    booking.transaction_id = row.transaction_id
+    # Map booking_status to domain model (status_code and description)
+    booking.status = BookingStatus(StatusCode(row.booking_status), row.booking_status)
+    booking.transaction_id = str(row.transaction_id) if row.transaction_id else None
     if row.user_id is not None:
         booking.user_id = row.user_id
     return booking
@@ -52,54 +57,30 @@ def _booking_to_domain(row: BookingModel) -> Booking:
 def _transaction_to_domain(row: TransactionModel) -> Transaction:
     tx = Transaction.__new__(Transaction)
     tx.transaction_id = row.transaction_id
-    tx.booking_id = row.booking_id
-    tx.total_amount = Decimal(str(row.total_amount)) if row.total_amount is not None else Decimal("0.00")
+    # Note: booking_id removed from new schema, set to None for backward compatibility
+    tx.booking_id = None
+    tx.total_amount = Decimal(str(row.total_price)) if row.total_price is not None else Decimal("0.00")
 
     status_enum = PaymentStatusEnum(row.payment_status)
-    tx.status = PaymentStatus(status_enum, row.payment_status_timestamp)
+    # payment_status_timestamp removed from new schema, use None
+    tx.status = PaymentStatus(status_enum, None)
 
-    if row.payment_type:
-        tx.payment_method = PaymentMethod(PaymentType(row.payment_type), row.payment_provider or "")
+    # payment_method stored as single field, parse if needed
+    if row.payment_method:
+        # Assume payment_method is stored as type string (e.g., "CREDIT_CARD")
+        try:
+            tx.payment_method = PaymentMethod(PaymentType(row.payment_method), "")
+        except:
+            tx.payment_method = None
     else:
         tx.payment_method = None
 
-    if row.user_id is not None:
-        tx.user_id = row.user_id
+    # user_id removed from new schema
+    tx.user_id = None
     return tx
 
 
-def _trip_to_domain(row: TripModel) -> Trip:
-    trip = Trip.__new__(Trip)
-    trip.trip_id = str(row.trip_id)  # Convert integer to string for domain model
-    trip.trip_name = row.trip_name
-    trip.capacity = row.capacity
-    trip._current_bookings = row.current_bookings or 0
-
-    # Schedules
-    trip._schedules = []
-    for s in (row.schedules or []):
-        trip._schedules.append(Schedule(s.start_date, s.end_date, s.location))
-
-    # Guide
-    if row.guide:
-        g = row.guide
-        guide = Guide(g.guide_id, g.name, g.contact, g.language)
-        guide.assign_to_trip(str(trip.trip_id))  # Convert to string
-        for sched in trip._schedules:
-            guide.set_trip_schedule(str(trip.trip_id), sched.start_date, sched.end_date)  # Convert to string
-        trip._guide = guide
-    else:
-        trip._guide = None
-
-    # Itinerary
-    if row.itinerary:
-        trip._itinerary = Itinerary(row.itinerary.destinations, row.itinerary.description)
-    else:
-        trip._itinerary = None
-
-    if row.user_id is not None:
-        trip.user_id = row.user_id
-    return trip
+# NOTE: _trip_to_domain() removed - Trip domain is now in Travel Planner service
 
 
 # ============================================================================
@@ -113,35 +94,38 @@ class BookingStorage:
         try:
             # Upsert participant
             p = booking.participant
+            # Split name into first_name and last_name
+            name_parts = p.name.strip().split(' ', 1)
+            first_name = name_parts[0] if len(name_parts) > 0 else 'Unknown'
+            last_name = name_parts[1] if len(name_parts) > 1 else ''
+            
             existing_p = session.get(ParticipantModel, p.participant_id)
             if existing_p:
-                existing_p.name = p.name
-                existing_p.contact = p.contact
-                existing_p.address = p.address
+                existing_p.first_name = first_name
+                existing_p.last_name = last_name
+                existing_p.phone_number = p.contact
             else:
                 session.add(ParticipantModel(
                     participant_id=p.participant_id,
-                    name=p.name,
-                    contact=p.contact,
-                    address=p.address,
+                    first_name=first_name,
+                    last_name=last_name,
+                    phone_number=p.contact,
                 ))
 
             # Upsert booking
             existing = session.get(BookingModel, booking.booking_id)
             if existing:
-                existing.trip_id = booking.trip_id
+                existing.id_rencana = booking.trip_id
                 existing.participant_id = p.participant_id
-                existing.status_code = booking.status.status_code.value
-                existing.status_description = booking.status.description
+                existing.booking_status = booking.status.status_code.value
                 existing.transaction_id = booking.transaction_id
                 existing.user_id = getattr(booking, "user_id", None)
             else:
                 session.add(BookingModel(
                     booking_id=booking.booking_id,
-                    trip_id=booking.trip_id,
+                    id_rencana=booking.trip_id,
                     participant_id=p.participant_id,
-                    status_code=booking.status.status_code.value,
-                    status_description=booking.status.description,
+                    booking_status=booking.status.status_code.value,
                     transaction_id=booking.transaction_id,
                     user_id=getattr(booking, "user_id", None),
                 ))
@@ -166,7 +150,7 @@ class BookingStorage:
     def find_by_trip_id(trip_id: str) -> List[Booking]:
         session = _db.SessionLocal()
         try:
-            rows = session.query(BookingModel).filter(BookingModel.trip_id == trip_id).all()
+            rows = session.query(BookingModel).filter(BookingModel.id_rencana == trip_id).all()
             return [_booking_to_domain(r) for r in rows]
         finally:
             session.close()
@@ -219,13 +203,11 @@ class TransactionStorage:
             existing = session.get(TransactionModel, transaction.transaction_id)
             data = dict(
                 transaction_id=transaction.transaction_id,
-                booking_id=transaction.booking_id,
-                total_amount=transaction.total_amount,
+                total_price=transaction.total_amount,
+                trip_price=Decimal("0.00"),  # Default, should be set from trip API
+                pickup_fee=Decimal("0.00"),  # Default, calculate as total_price - trip_price
                 payment_status=transaction.status.status.value,
-                payment_status_timestamp=transaction.status.timestamp,
-                payment_type=transaction.payment_method.type.value if transaction.payment_method else None,
-                payment_provider=transaction.payment_method.provider if transaction.payment_method else None,
-                user_id=getattr(transaction, "user_id", None),
+                payment_method=transaction.payment_method.type.value if transaction.payment_method else None,
             )
             if existing:
                 for k, v in data.items():
@@ -251,12 +233,21 @@ class TransactionStorage:
 
     @staticmethod
     def find_by_booking_id(booking_id: str) -> Optional[Transaction]:
+        """
+        Find transaction by booking_id.
+        Note: In new schema, booking_id is not directly in transactions table.
+        We need to query bookings table first to get transaction_id.
+        """
         session = _db.SessionLocal()
         try:
-            row = session.query(TransactionModel).filter(
-                TransactionModel.booking_id == booking_id
-            ).first()
-            return _transaction_to_domain(row) if row else None
+            # Find booking first to get transaction_id
+            booking_row = session.get(BookingModel, booking_id)
+            if not booking_row or not booking_row.transaction_id:
+                return None
+            
+            # Then find transaction by transaction_id
+            tx_row = session.get(TransactionModel, booking_row.transaction_id)
+            return _transaction_to_domain(tx_row) if tx_row else None
         finally:
             session.close()
 
@@ -286,146 +277,42 @@ class TransactionStorage:
             session.close()
 
 
-# ============================================================================
-# TRIP STORAGE
-# ============================================================================
+"""
+Temporary TripStorage implementation
+
+The original project moved trip persistence to the Travel Planner service.
+To keep this microservice runnable for local development and tests that
+expect `TripStorage` to exist, provide a lightweight in-memory store.
+
+This is NOT meant for production — replace with inter-service calls or
+shared database integration as needed.
+"""
+
+from backend.trip.aggregate_root import Trip
+
+# Simple in-memory store: {trip_id: Trip}
+_trip_store = {}
 
 class TripStorage:
     @staticmethod
     def save(trip: Trip) -> None:
-        session = _db.SessionLocal()
-        try:
-            existing = session.get(TripModel, trip.trip_id)
-
-            if existing:
-                existing.trip_name = trip.trip_name
-                existing.capacity = trip.capacity
-                existing.current_bookings = trip._current_bookings
-                existing.user_id = getattr(trip, "user_id", None)
-
-                # Sync schedules â€“ replace all
-                session.query(ScheduleModel).filter(ScheduleModel.trip_id == trip.trip_id).delete()
-                for s in trip.get_schedules():
-                    session.add(ScheduleModel(
-                        trip_id=trip.trip_id,
-                        start_date=s.start_date,
-                        end_date=s.end_date,
-                        location=s.location,
-                    ))
-
-                # Sync guide
-                session.query(GuideModel).filter(GuideModel.trip_id == trip.trip_id).delete()
-                guide = trip.get_guide()
-                if guide:
-                    session.add(GuideModel(
-                        guide_id=guide.guide_id,
-                        trip_id=trip.trip_id,
-                        name=guide.name,
-                        contact=guide.contact,
-                        language=guide.language,
-                    ))
-
-                # Sync itinerary
-                session.query(ItineraryModel).filter(ItineraryModel.trip_id == trip.trip_id).delete()
-                itin = trip.get_itinerary()
-                if itin:
-                    session.add(ItineraryModel(
-                        trip_id=trip.trip_id,
-                        destinations=list(itin.destination_list),
-                        description=itin.description,
-                    ))
-            else:
-                trip_model = TripModel(
-                    trip_id=trip.trip_id,
-                    trip_name=trip.trip_name,
-                    capacity=trip.capacity,
-                    current_bookings=trip._current_bookings,
-                    user_id=getattr(trip, "user_id", None),
-                )
-                session.add(trip_model)
-
-                for s in trip.get_schedules():
-                    session.add(ScheduleModel(
-                        trip_id=trip.trip_id,
-                        start_date=s.start_date,
-                        end_date=s.end_date,
-                        location=s.location,
-                    ))
-
-                guide = trip.get_guide()
-                if guide:
-                    session.add(GuideModel(
-                        guide_id=guide.guide_id,
-                        trip_id=trip.trip_id,
-                        name=guide.name,
-                        contact=guide.contact,
-                        language=guide.language,
-                    ))
-
-                itin = trip.get_itinerary()
-                if itin:
-                    session.add(ItineraryModel(
-                        trip_id=trip.trip_id,
-                        destinations=list(itin.destination_list),
-                        description=itin.description,
-                    ))
-
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
+        _trip_store[trip.trip_id] = trip
 
     @staticmethod
     def find_by_id(trip_id: str) -> Optional[Trip]:
-        session = _db.SessionLocal()
-        try:
-            # Convert string trip_id to integer for database query
-            try:
-                trip_id_int = int(trip_id)
-            except (ValueError, TypeError):
-                return None
-            row = session.get(TripModel, trip_id_int)
-            return _trip_to_domain(row) if row else None
-        finally:
-            session.close()
-
-    @staticmethod
-    def find_available_trips() -> List[Trip]:
-        session = _db.SessionLocal()
-        try:
-            rows = session.query(TripModel).filter(
-                TripModel.current_bookings < TripModel.capacity
-            ).all()
-            return [_trip_to_domain(r) for r in rows]
-        finally:
-            session.close()
+        return _trip_store.get(trip_id)
 
     @staticmethod
     def get_all() -> List[Trip]:
-        session = _db.SessionLocal()
-        try:
-            rows = session.query(TripModel).all()
-            return [_trip_to_domain(r) for r in rows]
-        finally:
-            session.close()
+        return list(_trip_store.values())
 
     @staticmethod
     def delete(trip_id: str) -> bool:
-        session = _db.SessionLocal()
-        try:
-            row = session.get(TripModel, trip_id)
-            if row:
-                session.delete(row)
-                session.commit()
-                return True
-            return False
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
+        if trip_id in _trip_store:
+            del _trip_store[trip_id]
+            return True
+        return False
+
 
 
 # ============================================================================

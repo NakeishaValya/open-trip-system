@@ -3,7 +3,9 @@ from sqlalchemy import (
     create_engine, Column, String, Integer, Boolean, Date,
     Text, Numeric, DateTime, ForeignKey, JSON
 )
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
+import uuid
 
 # URL dari Environment Variable. Do NOT default to a local SQLite file here;
 # tests set `DATABASE_URL` themselves (see `backend/tests/conftest.py`).
@@ -51,123 +53,48 @@ DESTINATION_TYPES = (
 # NOTE: UserModel removed - authentication is delegated to the central Django
 # service. This microservice only stores user_id strings on related tables.
 
-class TripModel(Base):
-    __tablename__ = "trips"
-
-    # Use INTEGER primary key for trip_id (autoincrement)
-    trip_id = Column(Integer, primary_key=True, autoincrement=True)
-    trip_name = Column(String, nullable=False)
-    capacity = Column(Integer, nullable=False)
-    current_bookings = Column(Integer, default=0)
-    user_id = Column(String, nullable=True)
-    # Additional fields used by frontend mapping
-    departure_date = Column(Date, nullable=True)
-    price = Column(Numeric(precision=12, scale=2), nullable=True)
-    status = Column(String(50), nullable=True)
-    # `tag` removed in favor of deriving `location` from related schedules
-    # Destination type for the trip; should be one of DESTINATION_TYPES
-    destination_type = Column(String(50), nullable=True)
-
-    schedules = relationship("ScheduleModel", back_populates="trip", cascade="all, delete-orphan")
-    guide = relationship("GuideModel", back_populates="trip", uselist=False, cascade="all, delete-orphan")
-    itinerary = relationship("ItineraryModel", back_populates="trip", uselist=False, cascade="all, delete-orphan")
-
-    @property
-    def location(self):
-        """Return a concatenated location string derived from related schedules.
-
-        This mirrors the frontend expectation where `location` is built
-        from schedule entries (e.g. start/end/location). If multiple
-        schedules exist, locations are joined with a comma.
-        """
-        try:
-            locs = [s.location for s in self.schedules if getattr(s, 'location', None)]
-            # keep order and unique
-            seen = set()
-            ordered = []
-            for l in locs:
-                if l not in seen:
-                    seen.add(l)
-                    ordered.append(l)
-            return ", ".join(ordered) if ordered else None
-        except Exception:
-            return None
-
-
-class ScheduleModel(Base):
-    __tablename__ = "schedules"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    trip_id = Column(Integer, ForeignKey("trips.trip_id", ondelete="CASCADE"), nullable=False)
-    start_date = Column(Date, nullable=False)
-    end_date = Column(Date, nullable=False)
-    location = Column(String, nullable=False)
-
-    trip = relationship("TripModel", back_populates="schedules")
-
-
-class GuideModel(Base):
-    __tablename__ = "guides"
-
-    guide_id = Column(String, primary_key=True)
-    trip_id = Column(Integer, ForeignKey("trips.trip_id", ondelete="CASCADE"), nullable=False)
-    name = Column(String, nullable=False)
-    contact = Column(String, nullable=False)
-    language = Column(String, nullable=False)
-
-    trip = relationship("TripModel", back_populates="guide")
-
-
-class ItineraryModel(Base):
-    __tablename__ = "itineraries"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    trip_id = Column(Integer, ForeignKey("trips.trip_id", ondelete="CASCADE"), unique=True, nullable=False)
-    destinations = Column(JSON, nullable=False)
-    description = Column(Text, nullable=False)
-
-    trip = relationship("TripModel", back_populates="itinerary")
-
+# NOTE: Trip-related models (TripModel, ScheduleModel, GuideModel, ItineraryModel)
+# have been MOVED to Travel Planner microservice as they are more relevant to
+# the travel planning domain. Trip data is now managed by the Travel Planner service.
 
 class ParticipantModel(Base):
     __tablename__ = "participants"
 
-    participant_id = Column(String, primary_key=True)
-    name = Column(String, nullable=False)
+    participant_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    first_name = Column(String, nullable=False)
+    last_name = Column(String, nullable=False)
     phone_number = Column(String, nullable=False)
+    trip_pickup_id = Column(UUID(as_uuid=True), nullable=True)
     gender = Column(String, nullable=True)
     nationality = Column(String, nullable=True)
     date_of_birth = Column(Date, nullable=True)
-    pick_up_point = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
 
 
 class BookingModel(Base):
     __tablename__ = "bookings"
 
-    booking_id = Column(String, primary_key=True)
-    trip_id = Column(Integer, ForeignKey("trips.trip_id", ondelete="CASCADE"), nullable=False)
-    participant_id = Column(String, ForeignKey("participants.participant_id"), nullable=False)
-    status_code = Column(String, nullable=False, default="PENDING")
-    status_description = Column(String, nullable=False, default="Booking is pending confirmation")
-    transaction_id = Column(String, nullable=True)
-    user_id = Column(String, nullable=True)
-    notes = Column(Text, nullable=True)
-
+    booking_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # user_id stores user identification as UUID string
+    user_id = Column(Text, nullable=False)
+    # Reference to Travel Planner's RencanaPerjalanan id (UUID)
+    id_rencana = Column(UUID(as_uuid=True), nullable=False)
+    participant_id = Column(UUID(as_uuid=True), ForeignKey("participants.participant_id"), nullable=False)
+    booking_status = Column(String, nullable=False, default="PENDING")
+    # Link to transaction (nullable until transaction created)
+    transaction_id = Column(UUID(as_uuid=True), nullable=True)
     participant = relationship("ParticipantModel")
 
 
 class TransactionModel(Base):
     __tablename__ = "transactions"
 
-    transaction_id = Column(String, primary_key=True)
-    booking_id = Column(String, nullable=True)
-    total_amount = Column(Numeric(precision=12, scale=2), default=0)
-    payment_status = Column(String, nullable=False, default="INITIATED")
-    payment_status_timestamp = Column(DateTime, nullable=True)
-    payment_type = Column(String, nullable=True)
-    payment_provider = Column(String, nullable=True)
-    user_id = Column(String, nullable=True)
+    transaction_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    total_price = Column(Numeric(precision=12, scale=2), nullable=False, default=0)
+    trip_price = Column(Numeric(precision=12, scale=2), nullable=False, default=0)
+    pickup_fee = Column(Numeric(precision=12, scale=2), nullable=False, default=0)
+    payment_status = Column(String, nullable=False, default="PENDING")
+    payment_method = Column(String, nullable=True)
 
 
 # ============================================================================
@@ -176,6 +103,14 @@ class TransactionModel(Base):
 
 # membuat semua tabel yang didefinisikan di metadata
 def init_db():
+    """
+    Creates all tables defined in SQLAlchemy metadata.
+    Now includes only: bookings, participants, transactions
+    
+    NOTE: Trip-related tables (trips, schedules, guides, itineraries) are now
+    managed by the Travel Planner microservice and will be created in the
+    travel_planner_db database.
+    """
     Base.metadata.create_all(bind=engine)
 
 # Alias untuk backward compatibility
