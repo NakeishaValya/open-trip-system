@@ -260,19 +260,22 @@ def get_bookings_by_trip(trip_id: str):
     request to originate from the booking owner.
     """
     try:
-        import sys
-        print(f"[DEBUG] get_bookings_by_trip called with trip_id={trip_id}", file=sys.stderr, flush=True)
-        
         all_bookings = BookingStorage.get_all()
-        print(f"[DEBUG] Found {len(all_bookings)} total bookings", file=sys.stderr, flush=True)
-        
         matched = [b for b in all_bookings if getattr(b, 'trip_id', None) == trip_id]
-        print(f"[DEBUG] Found {len(matched)} matching bookings", file=sys.stderr, flush=True)
 
         results = []
         for b in matched:
             try:
-                print(f"[DEBUG] Processing booking {b.booking_id}", file=sys.stderr, flush=True)
+                # Fetch the participant from database to get trip_pickup_id
+                from backend.database import ParticipantModel, SessionLocal
+                db = SessionLocal()
+                try:
+                    participant_model = db.query(ParticipantModel).filter(
+                        ParticipantModel.participant_id == b.participant.participant_id
+                    ).first()
+                finally:
+                    db.close()
+                
                 result = {
                     "booking_id": b.booking_id,
                     "trip_id": b.trip_id,
@@ -291,15 +294,12 @@ def get_bookings_by_trip(trip_id: str):
                 }
                 results.append(result)
             except Exception as e:
-                print(f"[ERROR] Failed to serialize booking {b.booking_id}: {e}", file=sys.stderr, flush=True)
                 import traceback
                 traceback.print_exc()
                 raise
 
-        print(f"[DEBUG] Returning {len(results)} results", file=sys.stderr, flush=True)
         return results
     except Exception as e:
-        print(f"[ERROR] get_bookings_by_trip failed: {e}", file=sys.stderr, flush=True)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

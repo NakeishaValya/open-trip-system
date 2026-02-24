@@ -18,7 +18,7 @@ from backend.transaction.value_objects import PaymentStatus, PaymentStatusEnum, 
 # from backend.trip.aggregate_root import Trip
 # from backend.trip.entities import Guide
 # from backend.trip.value_objects import Schedule, Itinerary
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 
 # ============================================================================
@@ -28,11 +28,12 @@ from sqlalchemy.orm import Session
 def _participant_to_domain(row: ParticipantModel) -> Participant:
     # Combine first_name and last_name from DB to name in domain
     full_name = f"{row.first_name} {row.last_name}".strip()
+    
     return Participant(
         participant_id=str(row.participant_id),  # Convert UUID to string
         name=full_name,
         contact=row.phone_number,  # Map phone_number to contact
-        address='',  # pick_up_point removed from new schema
+        address=str(row.trip_pickup_id) if row.trip_pickup_id else '',  # Map trip_pickup_id to address/pick_up_point
         gender=row.gender,
         nationality=row.nationality,
         date_of_birth=row.date_of_birth,
@@ -150,7 +151,7 @@ class BookingStorage:
     def find_by_trip_id(trip_id: str) -> List[Booking]:
         session = _db.SessionLocal()
         try:
-            rows = session.query(BookingModel).filter(BookingModel.id_rencana == trip_id).all()
+            rows = session.query(BookingModel).options(joinedload(BookingModel.participant)).filter(BookingModel.id_rencana == trip_id).all()
             return [_booking_to_domain(r) for r in rows]
         finally:
             session.close()
