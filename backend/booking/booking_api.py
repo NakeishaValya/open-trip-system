@@ -279,6 +279,7 @@ def get_bookings_by_trip(trip_id: str):
                 result = {
                     "booking_id": b.booking_id,
                     "trip_id": b.trip_id,
+                    "trip_pickup_id": participant_model.trip_pickup_id if participant_model else None,
                     "participant_id": b.participant.participant_id,
                     "status": b.status.status_code.value,
                     "message": b.status.description,

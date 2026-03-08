@@ -6,7 +6,7 @@ import httpx
 router = APIRouter(prefix="/aggregator", tags=["Aggregator"])
 
 OPEN_TRIP_URL = os.getenv("OPEN_TRIP_URL", "http://localhost:8002")
-TRAVEL_PLANNER_URL = os.getenv("TRAVEL_PLANNER_URL", "http://localhost:8003")
+TRAVEL_PLANNER_URL = os.getenv("TRAVEL_PLANNER_URL", "http://localhost:8006")
 
 
 @router.get('/bookings/{trip_id}')
