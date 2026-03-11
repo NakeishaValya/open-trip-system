@@ -1,7 +1,7 @@
 import os
 from sqlalchemy import (
     create_engine, Column, String, Integer, Boolean, Date,
-    Text, Numeric, DateTime, ForeignKey, JSON
+    Text, Numeric, DateTime, ForeignKey, JSON, ARRAY
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
@@ -79,11 +79,11 @@ class BookingModel(Base):
     user_id = Column(Text, nullable=False)
     # Reference to Travel Planner's RencanaPerjalanan id (UUID)
     id_rencana = Column(UUID(as_uuid=True), nullable=False)
-    participant_id = Column(UUID(as_uuid=True), ForeignKey("participants.participant_id"), nullable=False)
+    # Support multiple participants - use JSON for SQLite compatibility
+    participant_ids = Column(JSON, nullable=False)
     booking_status = Column(String, nullable=False, default="PENDING")
     # Link to transaction (nullable until transaction created)
     transaction_id = Column(UUID(as_uuid=True), nullable=True)
-    participant = relationship("ParticipantModel")
 
 
 class TransactionModel(Base):

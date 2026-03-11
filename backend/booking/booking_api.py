@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import date
 from uuid import uuid4
+from sqlalchemy.orm import Session
 
 from .aggregate_root import Booking
 from .entities import Participant
@@ -11,6 +12,7 @@ from backend.auth import get_current_user, get_current_user_flexible, Authentica
 from backend.storage import TripStorage
 from .value_objects import BookingStatus, StatusCode
 from backend.trip.aggregate_root import Trip
+from backend.database import get_db, BookingModel, ParticipantModel
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
@@ -68,9 +70,27 @@ class ParticipantRequest(BaseModel):
     pick_up_point: Optional[str] = None
     notes: Optional[str] = None
 
+class ParticipantDetailRequest(BaseModel):
+    """Detailed participant info with separate first/last names"""
+    first_name: str
+    last_name: str
+    phone_number: str
+    gender: Optional[str] = None
+    nationality: Optional[str] = None
+    date_of_birth: Optional[date] = None
+    pickup_location: Optional[str] = None
+    trip_pickup_id: Optional[str] = None  # UUID from travel_planner trip_pickup_point table
+    notes: Optional[str] = None
+
 class CreateBookingRequest(BaseModel):
     trip_id: str
     participant: ParticipantRequest
+
+class CreateMultiPassengerBookingRequest(BaseModel):
+    """Request model for creating a booking with multiple passengers"""
+    id_rencana: str  # Travel plan ID from travel_planner
+    participants: List[ParticipantDetailRequest]
+    payment_method: Optional[str] = None
 
 class PassengerResponse(BaseModel):
     name: str
@@ -88,6 +108,15 @@ class BookingResponse(BaseModel):
     status: str
     message: Optional[str] = None
     passenger: Optional[PassengerResponse] = None
+
+class MultiPassengerBookingResponse(BaseModel):
+    """Response model for multi-passenger booking"""
+    booking_id: str
+    id_rencana: str
+    participant_ids: List[str]
+    booking_status: str
+    transaction_id: Optional[str] = None
+    message: str
 
 class CancelBookingRequest(BaseModel):
     booking_id: str
@@ -166,6 +195,150 @@ def create_booking(
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/multi-passenger", status_code=status.HTTP_201_CREATED, response_model=MultiPassengerBookingResponse)
+def create_multi_passenger_booking(
+    request: CreateMultiPassengerBookingRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible),
+    db: Session = Depends(get_db)
+):
+    """
+    Create a booking with multiple passengers.
+    
+    This endpoint creates:
+    - Multiple ParticipantModel records (one per passenger)
+    - One BookingModel record with all participant_ids stored as an array
+    
+    All participants are linked to the same booking_id and id_rencana.
+    """
+    try:
+        # Validate request
+        if not request.participants or len(request.participants) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one participant is required"
+            )
+        
+        # Generate IDs
+        booking_id = uuid4()
+        participant_ids = []
+        
+        # Create participant records
+        for participant_data in request.participants:
+            participant_id = uuid4()
+            participant_ids.append(str(participant_id))
+            
+            # Parse trip_pickup_id if provided
+            trip_pickup_uuid = None
+            if participant_data.trip_pickup_id:
+                try:
+                    from uuid import UUID
+                    trip_pickup_uuid = UUID(participant_data.trip_pickup_id)
+                except (ValueError, AttributeError):
+                    # If invalid UUID, log and continue with None
+                    print(f"Invalid trip_pickup_id: {participant_data.trip_pickup_id}")
+            
+            # Create ParticipantModel
+            participant = ParticipantModel(
+                participant_id=participant_id,
+                first_name=participant_data.first_name,
+                last_name=participant_data.last_name,
+                phone_number=participant_data.phone_number,
+                gender=participant_data.gender,
+                nationality=participant_data.nationality,
+                date_of_birth=participant_data.date_of_birth,
+                trip_pickup_id=trip_pickup_uuid,  # Store UUID from travel_planner
+                notes=participant_data.notes
+            )
+            db.add(participant)
+        
+        # Create booking record with all participant IDs
+        booking = BookingModel(
+            booking_id=booking_id,
+            user_id=current_user.id if hasattr(current_user, 'id') else str(current_user.user_id),
+            id_rencana=request.id_rencana,
+            participant_ids=participant_ids,  # Store as JSON array
+            booking_status="PENDING",
+            transaction_id=None
+        )
+        db.add(booking)
+        
+        # Commit all changes
+        db.commit()
+        db.refresh(booking)
+        
+        return MultiPassengerBookingResponse(
+            booking_id=str(booking.booking_id),
+            id_rencana=str(booking.id_rencana),
+            participant_ids=booking.participant_ids,
+            booking_status=booking.booking_status,
+            transaction_id=str(booking.transaction_id) if booking.transaction_id else None,
+            message=f"Booking created successfully with {len(participant_ids)} passenger(s)"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create booking: {str(e)}"
+        )
+
+@router.get("/user/me")
+def get_my_bookings(
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all bookings for the currently logged-in user.
+    Returns bookings created via the multi-passenger endpoint.
+    """
+    try:
+        # Query bookings for current user
+        bookings = db.query(BookingModel).filter(
+            BookingModel.user_id == current_user.id
+        ).all()
+        
+        result = []
+        for booking in bookings:
+            # Get all participants for this booking
+            participants = []
+            if booking.participant_ids:
+                for participant_id in booking.participant_ids:
+                    participant = db.query(ParticipantModel).filter(
+                        ParticipantModel.participant_id == participant_id
+                    ).first()
+                    if participant:
+                        participants.append({
+                            "participant_id": str(participant.participant_id),
+                            "first_name": participant.first_name,
+                            "last_name": participant.last_name,
+                            "phone_number": participant.phone_number,
+                            "gender": participant.gender,
+                            "nationality": participant.nationality,
+                            "date_of_birth": str(participant.date_of_birth) if participant.date_of_birth else None,
+                            "notes": participant.notes
+                        })
+            
+            result.append({
+                "booking_id": str(booking.booking_id),
+                "id_rencana": str(booking.id_rencana),
+                "trip_id": str(booking.id_rencana),  # For compatibility
+                "booking_status": booking.booking_status,
+                "status": booking.booking_status,  # For compatibility
+                "transaction_id": str(booking.transaction_id) if booking.transaction_id else None,
+                "participants": participants,
+                "participant_count": len(participants)
+            })
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch bookings: {str(e)}"
+        )
 
 @router.get("/{booking_id}", response_model=BookingResponse)
 def get_booking(
