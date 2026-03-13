@@ -318,6 +318,7 @@ def get_my_bookings(
                             "gender": participant.gender,
                             "nationality": participant.nationality,
                             "date_of_birth": str(participant.date_of_birth) if participant.date_of_birth else None,
+                            "trip_pickup_id": str(participant.trip_pickup_id) if participant.trip_pickup_id else None,
                             "notes": participant.notes
                         })
             
