@@ -3,6 +3,8 @@ from sqlalchemy import (
     create_engine, Column, String, Integer, Boolean, Date,
     Text, Numeric, DateTime, ForeignKey, JSON, ARRAY
 )
+from sqlalchemy import inspect
+from sqlalchemy.sql import sqltypes
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
 import uuid
@@ -101,6 +103,86 @@ class TransactionModel(Base):
 # HELPERS
 # ============================================================================
 
+def _column_type_family(column_type: object) -> str:
+    """Normalisasi tipe kolom SQLAlchemy agar komparasi lintas dialect stabil."""
+    type_name = str(column_type).lower()
+    if "varchar" in type_name or "character varying" in type_name or "text" in type_name:
+        return "string"
+    if "numeric" in type_name or "decimal" in type_name:
+        return "numeric"
+    if "double precision" in type_name or "float" in type_name or "real" in type_name:
+        return "float"
+
+    if isinstance(column_type, sqltypes.Uuid):
+        return "uuid"
+    if isinstance(column_type, sqltypes.Integer):
+        return "integer"
+    if isinstance(column_type, sqltypes.Boolean):
+        return "boolean"
+    if isinstance(column_type, sqltypes.Date):
+        return "date"
+    if isinstance(column_type, sqltypes.Time):
+        return "time"
+    if isinstance(column_type, sqltypes.String):
+        return "string"
+    if isinstance(column_type, sqltypes.Text):
+        return "string"
+    if isinstance(column_type, sqltypes.Numeric):
+        return "numeric"
+    if isinstance(column_type, sqltypes.JSON):
+        return "json"
+
+    return str(column_type)
+
+
+def validate_existing_schema_compatibility() -> list[str]:
+    """
+    Validasi schema DB saat ini terhadap model ORM yang dikelola service ini.
+
+    Hanya tabel yang didefinisikan di metadata service ini yang divalidasi agar
+    tabel legacy/unmanaged tidak memblokir startup.
+    """
+    if DATABASE_URL.startswith("sqlite"):
+        return []
+
+    inspector = inspect(engine)
+    db_tables = set(inspector.get_table_names())
+    mismatches: list[str] = []
+
+    for table_name, model_table in Base.metadata.tables.items():
+        if table_name not in db_tables:
+            # Tabel baru akan dibuat oleh create_all.
+            continue
+
+        db_columns_raw = inspector.get_columns(table_name)
+        db_columns = {col["name"]: col for col in db_columns_raw}
+        model_columns = {col.name: col for col in model_table.columns}
+
+        for model_col_name, model_col in model_columns.items():
+            if model_col_name not in db_columns:
+                mismatches.append(
+                    f"{table_name}.{model_col_name}: missing column in DB"
+                )
+                continue
+
+            db_col = db_columns[model_col_name]
+            model_type = _column_type_family(model_col.type)
+            db_type = _column_type_family(db_col["type"])
+            if model_type != db_type:
+                mismatches.append(
+                    f"{table_name}.{model_col_name}: type model={model_type}, db={db_type}"
+                )
+
+            model_nullable = bool(model_col.nullable)
+            db_nullable = bool(db_col.get("nullable", True))
+            if model_nullable != db_nullable:
+                mismatches.append(
+                    f"{table_name}.{model_col_name}: nullable model={model_nullable}, db={db_nullable}"
+                )
+
+    return mismatches
+
+
 # membuat semua tabel yang didefinisikan di metadata
 def init_db():
     """
@@ -111,6 +193,15 @@ def init_db():
     managed by the Travel Planner microservice and will be created in the
     travel_planner_db database.
     """
+    mismatches = validate_existing_schema_compatibility()
+    if mismatches:
+        mismatch_text = "\n- " + "\n- ".join(mismatches)
+        raise RuntimeError(
+            "Database schema is incompatible with backend ORM models. "
+            "Synchronize manual psql changes with backend schema first."
+            f"{mismatch_text}"
+        )
+
     Base.metadata.create_all(bind=engine)
 
 # Alias untuk backward compatibility
