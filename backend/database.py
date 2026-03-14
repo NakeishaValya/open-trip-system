@@ -71,6 +71,7 @@ class ParticipantModel(Base):
     nationality = Column(String, nullable=True)
     date_of_birth = Column(Date, nullable=True)
     notes = Column(Text, nullable=True)
+    is_confirmed = Column(Boolean, nullable=False, default=False)
 
 
 class BookingModel(Base):

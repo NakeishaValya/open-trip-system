@@ -2,8 +2,11 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import date
-from uuid import uuid4
+from uuid import uuid4, UUID
 from sqlalchemy.orm import Session
+import os
+
+import httpx
 
 from .aggregate_root import Booking
 from .entities import Participant
@@ -15,6 +18,7 @@ from backend.trip.aggregate_root import Trip
 from backend.database import get_db, BookingModel, ParticipantModel
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
+TRAVEL_PLANNER_URL = os.getenv("TRAVEL_PLANNER_URL", "http://localhost:8005")
 
 # ==========================================
 # HELPER FUNCTIONS
@@ -59,6 +63,102 @@ def _get_trip(trip_id: str) -> Trip:
             detail=f"Trip dengan ID {trip_id} tidak ditemukan"
         )
     return trip
+
+
+def _build_planner_slot_urls(id_rencana: str, action: str) -> List[str]:
+    """Build candidate URLs for direct travel_planner and django gateway modes."""
+    base = (TRAVEL_PLANNER_URL or "").rstrip("/")
+    if not base:
+        return []
+
+    # If pointing to django gateway `/api/planner`, call relative path without `/api/perencanaan`.
+    if base.endswith("/api/planner"):
+        return [f"{base}/trips/{id_rencana}/{action}"]
+
+    # If already includes `/api/perencanaan`, append relative path.
+    if base.endswith("/api/perencanaan"):
+        return [f"{base}/trips/{id_rencana}/{action}"]
+
+    # Default: direct call to travel planner FastAPI service.
+    return [
+        f"{base}/api/perencanaan/trips/{id_rencana}/{action}",
+        f"{base}/api/planner/trips/{id_rencana}/{action}",
+    ]
+
+
+def _post_to_planner_slot_endpoint(id_rencana: str, action: str, participant_count: int) -> httpx.Response:
+    last_response = None
+    attempted_urls = _build_planner_slot_urls(id_rencana, action)
+    for url in attempted_urls:
+        try:
+            response = httpx.post(url, json={"participant_count": participant_count}, timeout=10.0)
+            # Try next candidate only when endpoint not found.
+            if response.status_code == 404:
+                last_response = response
+                continue
+            return response
+        except Exception:
+            continue
+
+    if last_response is not None:
+        return last_response
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=f"Gagal menghubungi service travel planner. Cek TRAVEL_PLANNER_URL. attempted={attempted_urls}"
+    )
+
+
+def _reserve_slots_in_planner(id_rencana: str, participant_count: int) -> None:
+    try:
+        response = _post_to_planner_slot_endpoint(id_rencana, "reserve-slots", participant_count)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Gagal menghubungi service travel planner: {str(exc)}"
+        )
+
+    if response.status_code >= 400:
+        detail = "Slot tidak tersedia"
+        try:
+            body = response.json()
+            detail = body.get("detail") or detail
+        except Exception:
+            pass
+
+        if response.status_code == 409:
+            mapped_status = status.HTTP_409_CONFLICT
+        elif response.status_code == 404:
+            mapped_status = status.HTTP_502_BAD_GATEWAY
+            detail = "Endpoint slot travel planner tidak ditemukan. Periksa TRAVEL_PLANNER_URL dan prefix API service planner"
+        else:
+            mapped_status = status.HTTP_502_BAD_GATEWAY
+        raise HTTPException(status_code=mapped_status, detail=detail)
+
+
+def _release_slots_in_planner(id_rencana: str, participant_count: int) -> None:
+    try:
+        _post_to_planner_slot_endpoint(id_rencana, "release-slots", participant_count)
+    except Exception:
+        # Best effort compensation only.
+        pass
+
+
+def _sync_slots_in_planner(id_rencana: str, participant_count: int) -> dict:
+    response = _post_to_planner_slot_endpoint(id_rencana, "sync-slots", participant_count)
+
+    if response.status_code >= 400:
+        detail = f"Failed syncing trip {id_rencana}"
+        try:
+            body = response.json()
+            detail = body.get("detail") or detail
+        except Exception:
+            pass
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
+
+    try:
+        return response.json() if isinstance(response.json(), dict) else {"trip_id": id_rencana}
+    except Exception:
+        return {"trip_id": id_rencana}
 
 # Request/Response Models
 class ParticipantRequest(BaseModel):
@@ -211,6 +311,9 @@ def create_multi_passenger_booking(
     
     All participants are linked to the same booking_id and id_rencana.
     """
+    reserved_slots = False
+    participant_count = len(request.participants or [])
+
     try:
         # Validate request
         if not request.participants or len(request.participants) == 0:
@@ -219,6 +322,9 @@ def create_multi_passenger_booking(
                 detail="At least one participant is required"
             )
         
+        _reserve_slots_in_planner(request.id_rencana, participant_count)
+        reserved_slots = True
+
         # Generate IDs
         booking_id = uuid4()
         participant_ids = []
@@ -277,9 +383,13 @@ def create_multi_passenger_booking(
         )
         
     except HTTPException:
+        if reserved_slots:
+            _release_slots_in_planner(request.id_rencana, participant_count)
         raise
     except Exception as e:
         db.rollback()
+        if reserved_slots:
+            _release_slots_in_planner(request.id_rencana, participant_count)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create booking: {str(e)}"
@@ -339,6 +449,49 @@ def get_my_bookings(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch bookings: {str(e)}"
+        )
+
+
+@router.post("/sync-slot-availability")
+def sync_slot_availability(
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible),
+    db: Session = Depends(get_db)
+):
+    """
+    Recalculate slot_tersedia in travel_planner_db from existing open_trip bookings.
+
+    Participant count per trip is derived from bookings.participant_ids array length.
+    """
+    try:
+        bookings = db.query(BookingModel).all()
+        participant_counts = {}
+
+        for booking in bookings:
+            trip_id = str(booking.id_rencana)
+            participant_ids = booking.participant_ids or []
+            participant_count = len(participant_ids) if isinstance(participant_ids, list) else 0
+            participant_counts[trip_id] = participant_counts.get(trip_id, 0) + participant_count
+
+        synced = []
+        for trip_id, count in participant_counts.items():
+            sync_result = _sync_slots_in_planner(trip_id, count)
+            synced.append({
+                "trip_id": trip_id,
+                "participant_count": count,
+                "slot_tersedia": sync_result.get("slot_tersedia")
+            })
+
+        return {
+            "success": True,
+            "synced_count": len(synced),
+            "synced": synced
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to synchronize slot availability: {str(e)}"
         )
 
 @router.get("/{booking_id}", response_model=BookingResponse)
@@ -426,57 +579,78 @@ def get_all_bookings(
 
 
 @router.get("/by_trip/{trip_id}")
-def get_bookings_by_trip(trip_id: str):
-    """Return bookings for a given trip_id (no ownership check).
+def get_bookings_by_trip(
+    trip_id: str,
+    db: Session = Depends(get_db)
+):
+    """Return participant rows for a trip from open_trip_db.
 
-    This endpoint is intended for internal UI needs where we want to
-    display booking/participant data for a trip without requiring the
-    request to originate from the booking owner.
+    Data source:
+    - bookings table (booking_id, booking_status, participant_ids, id_rencana)
+    - participants table (participant profile fields)
     """
     try:
-        all_bookings = BookingStorage.get_all()
-        matched = [b for b in all_bookings if getattr(b, 'trip_id', None) == trip_id]
+        try:
+            trip_uuid = UUID(str(trip_id))
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="trip_id harus UUID valid"
+            )
 
-        results = []
-        for b in matched:
-            try:
-                # Fetch the participant from database to get trip_pickup_id
-                from backend.database import ParticipantModel, SessionLocal
-                db = SessionLocal()
-                try:
-                    participant_model = db.query(ParticipantModel).filter(
-                        ParticipantModel.participant_id == b.participant.participant_id
-                    ).first()
-                finally:
-                    db.close()
-                
-                result = {
-                    "booking_id": b.booking_id,
-                    "trip_id": b.trip_id,
-                    "trip_pickup_id": participant_model.trip_pickup_id if participant_model else None,
-                    "participant_id": b.participant.participant_id,
-                    "status": b.status.status_code.value,
-                    "message": b.status.description,
-                    "passenger": {
-                        "name": b.participant.name,
-                        "phone_number": b.participant.phone_number,
-                        "gender": b.participant.gender,
-                        "nationality": b.participant.nationality,
-                        "date_of_birth": str(b.participant.date_of_birth) if b.participant.date_of_birth else None,
-                        "pick_up_point": b.participant.pick_up_point,
-                        "notes": b.participant.notes
-                    }
-                }
-                results.append(result)
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                raise
+        bookings = db.query(BookingModel).filter(
+            BookingModel.id_rencana == trip_uuid
+        ).all()
 
-        return results
+        if not bookings:
+            return []
+
+        participant_ids = []
+        booking_status_by_participant = {}
+        booking_id_by_participant = {}
+
+        for booking in bookings:
+            ids = booking.participant_ids or []
+            if not isinstance(ids, list):
+                continue
+            for pid in ids:
+                participant_ids.append(str(pid))
+                booking_status_by_participant[str(pid)] = booking.booking_status or "PENDING"
+                booking_id_by_participant[str(pid)] = str(booking.booking_id)
+
+        unique_participant_ids = list({pid for pid in participant_ids if pid})
+        if not unique_participant_ids:
+            return []
+
+        participants = db.query(ParticipantModel).filter(
+            ParticipantModel.participant_id.in_(unique_participant_ids)
+        ).all()
+
+        rows = []
+        for p in participants:
+            pid = str(p.participant_id)
+            rows.append({
+                "booking_id": booking_id_by_participant.get(pid),
+                "booking_status": booking_status_by_participant.get(pid, "PENDING"),
+                "participant_id": pid,
+                "id_rencana": str(trip_uuid),
+                "trip_id": str(trip_uuid),
+                "first_name": p.first_name,
+                "last_name": p.last_name,
+                "phone_number": p.phone_number,
+                "gender": p.gender,
+                "date_of_birth": str(p.date_of_birth) if p.date_of_birth else None,
+                "is_confirmed": bool(p.is_confirmed),
+                "pick_up_point": None,
+                "trip_pickup_id": str(p.trip_pickup_id) if p.trip_pickup_id else None,
+                "nationality": p.nationality,
+                "notes": p.notes,
+            })
+
+        return rows
+    except HTTPException:
+        raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.post("/{booking_id}/confirm")
@@ -511,6 +685,64 @@ def cancel_booking(
         return {"message": "Booking cancelled successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/participants/{participant_id}/confirm")
+def confirm_participant(
+    participant_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user_flexible),
+    db: Session = Depends(get_db)
+):
+    """Update participant confirmation flag in participants table."""
+    try:
+        _ = current_user
+
+        try:
+            pid_uuid = UUID(str(participant_id))
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="participant_id harus UUID valid"
+            )
+
+        updated_rows = db.query(ParticipantModel).filter(
+            ParticipantModel.participant_id == pid_uuid
+        ).update({ParticipantModel.is_confirmed: True}, synchronize_session=False)
+
+        if updated_rows == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Participant tidak ditemukan"
+            )
+
+        db.commit()
+
+        participant = db.query(ParticipantModel).filter(
+            ParticipantModel.participant_id == pid_uuid
+        ).first()
+
+        if not participant:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Participant berhasil diupdate tetapi gagal dibaca ulang"
+            )
+
+        db.refresh(participant)
+
+        return {
+            "participant_id": str(participant.participant_id),
+            "first_name": participant.first_name,
+            "last_name": participant.last_name,
+            "is_confirmed": bool(participant.is_confirmed),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Gagal mengkonfirmasi participant: {str(e)}"
+        )
 
 # @router.post("/{booking_id}/refund")
 # def request_refund(booking_id: str, request: RefundRequest):
